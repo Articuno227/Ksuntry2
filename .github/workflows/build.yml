@@ -55,13 +55,17 @@ jobs:
           tail -6 "$DEFCONFIG"
 
       # ── Завантажуємо Clang (Публічне дзеркало GitLab) ─────────
+            # ── Завантажуємо Clang (Офіційний пребілт AOSP Clang 14) ──
       - name: Download Clang toolchain
         run: |
-          # Клонуємо офіційний компілятор r450784d (Clang 14.0.6)
-          git clone --depth=1 \
-            https://gitlab.com/itsssc/clang-r450784d.git \
-            clang
-          echo "✅ Clang cloned successfully"
+          mkdir -p clang
+          # Завантажуємо офіційний стабільний Clang r450784d (14.0.6) з Android CI
+          wget -q --show-progress "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-13.0.0_r1/clang-r450784d.tar.gz" -O clang.tar.gz
+          
+          # Розпаковуємо у створену папку
+          tar -xf clang.tar.gz -C clang
+          rm clang.tar.gz
+          echo "✅ Clang ready"
           clang/bin/clang --version
 
       # ── Завантажуємо GCC ──────────────────────────────────────
