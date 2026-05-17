@@ -1,30 +1,7 @@
 # ============================================================
-#  GitHub Actions — Build SukiSU Ultra + SUSFS + KPM
-#  ROM: PixelOS 16.2 (sixteen-qpr2)
-#  Device: Redmi Note 9 Pro (joyeuse) | Kernel: sm6250 / 4.14
-# ============================================================
-#
-#  ЩО ВХОДИТЬ:
-#  • SukiSU Ultra  — kernel-level root (форк KernelSU)
-#  • SUSFS         — вбудоване приховування root (гілка susfs-main)
-#  • KPM           — Kernel Patch Module (патчинг ядра в рантаймі)
-#
-#  ВИМОГИ ДО ЯДРА (4.14, non-GKI):
-#  • CONFIG_KPM=y
-#  • CONFIG_KALLSYMS=y
-#  • CONFIG_KALLSYMS_ALL=y
-#  Ці три рядки додаються автоматично кроком нижче.
-#
-#  ІНСТРУКЦІЯ:
-#  1. Створи новий публічний репозиторій на GitHub
-#  2. Помісти цей файл: .github/workflows/build.yml
-#  3. Actions → "Build SukiSU Ultra + SUSFS + KPM" → Run workflow
-#  4. Завантаж ZIP з Artifacts після завершення (~40-70 хв)
-#  5. Прошивай через TWRP
-#  6. Manager APK: https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases
-#
-#  УВАГА: KPM для 4.14 є експериментальним. Якщо пристрій не
-#  завантажується — прошивай стоковий boot.img через fastboot.
+#  Build SukiSU Ultra + SUSFS + KPM
+#  Device: Redmi Note 9 Pro (joyeuse) | sm6250 | 4.14 non-GKI
+#  ROM: PixelOS sixteen-qpr2
 # ============================================================
 
 name: Build SukiSU Ultra + SUSFS + KPM
@@ -39,96 +16,126 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            git bc bison flex libssl-dev make \
+            libelf-dev zip curl python3 ccache \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
 
-      # ── Крок 1: Клонуємо ядро окремо щоб патчити конфіг ──────
-      - name: Clone kernel source
+      # ── Клонуємо ядро ─────────────────────────────────────────
+      - name: Clone kernel
         run: |
           git clone --depth=1 \
             --branch sixteen-qpr2 \
             https://github.com/PixelOS-Devices/android_kernel_xiaomi_sm6250 \
-            kernel
+            kernel_source
 
-      # ── Крок 2: Інтегруємо SukiSU Ultra (гілка susfs-main) ───
-      # susfs-main = SukiSU + вбудований SUSFS, без додаткових патчів
-      - name: Integrate SukiSU Ultra (susfs-main = SukiSU + SUSFS)
+      # ── Інтегруємо SukiSU Ultra з SUSFS ──────────────────────
+      - name: Integrate SukiSU Ultra (susfs-main)
         run: |
-          cd kernel
+          cd kernel_source
           curl -LSs \
             "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
             | bash -s susfs-main
           echo "✅ SukiSU Ultra (susfs-main) integrated"
 
-      # ── Крок 3: Додаємо KPM + KALLSYMS до defconfig ──────────
-      # CONFIG_KPM=y          — вмикає Kernel Patch Module
-      # CONFIG_KALLSYMS=y     — потрібно для KPM на non-GKI
-      # CONFIG_KALLSYMS_ALL=y — потрібно для KPM на non-GKI
-      - name: Enable KPM + KALLSYMS in defconfig
+      # ── Додаємо KPM + KALLSYMS у defconfig ───────────────────
+      - name: Enable KPM in defconfig
         run: |
-          DEFCONFIG="kernel/arch/arm64/configs/cust_defconfig"
+          DEFCONFIG="kernel_source/arch/arm64/configs/cust_defconfig"
           echo "" >> "$DEFCONFIG"
-          echo "# SukiSU Ultra KPM support" >> "$DEFCONFIG"
-          grep -q "CONFIG_KPM" "$DEFCONFIG" \
-            || echo "CONFIG_KPM=y" >> "$DEFCONFIG"
-          grep -q "CONFIG_KALLSYMS=y" "$DEFCONFIG" \
-            || echo "CONFIG_KALLSYMS=y" >> "$DEFCONFIG"
-          grep -q "CONFIG_KALLSYMS_ALL" "$DEFCONFIG" \
-            || echo "CONFIG_KALLSYMS_ALL=y" >> "$DEFCONFIG"
-          echo "✅ KPM + KALLSYMS enabled in defconfig"
-          echo "--- Tail of defconfig ---"
-          tail -10 "$DEFCONFIG"
+          echo "# SukiSU KPM" >> "$DEFCONFIG"
+          grep -q "CONFIG_KPM=y"          "$DEFCONFIG" || echo "CONFIG_KPM=y"          >> "$DEFCONFIG"
+          grep -q "CONFIG_KALLSYMS=y"     "$DEFCONFIG" || echo "CONFIG_KALLSYMS=y"     >> "$DEFCONFIG"
+          grep -q "CONFIG_KALLSYMS_ALL=y" "$DEFCONFIG" || echo "CONFIG_KALLSYMS_ALL=y" >> "$DEFCONFIG"
+          echo "✅ KPM flags added"
+          tail -6 "$DEFCONFIG"
 
-      # ── Крок 4: Збираємо ядро через kernel_build_action ──────
-      # kernel-url вказує на локальний клонований каталог (./kernel)
-      # ksu: false — бо ми вже вручну інтегрували SukiSU вище
-      - name: Build Kernel
-        uses: dabao1955/kernel_build_action@main
-        with:
-          kernel-url: ./kernel
-          kernel-dir: kernel
+      # ── Завантажуємо Clang toolchain ──────────────────────────
+      - name: Download Clang
+        run: |
+          mkdir -p clang
+          wget -q \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r450784d.tar.gz" \
+            -O clang.tar.gz || \
+          wget -q \
+            "https://github.com/ZyCromerZ/Clang/releases/download/14.0.6-20220612-release/Clang-14.0.6-20220612.tar.gz" \
+            -O clang.tar.gz
+          tar -xf clang.tar.gz -C clang
+          echo "✅ Clang downloaded"
+          ls clang/bin/clang* 2>/dev/null | head -3 || echo "clang path: $(find clang -name 'clang' -type f | head -1)"
 
-          arch: arm64
-          config: cust_defconfig
+      # ── Завантажуємо GCC ──────────────────────────────────────
+      - name: Download GCC
+        run: |
+          git clone --depth=1 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
+            gcc64
+          git clone --depth=1 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
+            gcc32
+          echo "✅ GCC downloaded"
 
-          # AOSP toolchain — стабільний для 4.14 non-GKI
-          aosp-clang: true
-          aosp-clang-version: r450784d
-          aosp-gcc: true
-          android-version: 12
+      # ── Збірка ядра ───────────────────────────────────────────
+      - name: Build kernel
+        run: |
+          CLANG_PATH="$(pwd)/clang/bin"
+          GCC64_PATH="$(pwd)/gcc64/bin"
+          GCC32_PATH="$(pwd)/gcc32/bin"
 
-          # SukiSU вже інтегровано вище вручну
-          ksu: false
+          export PATH="$CLANG_PATH:$GCC64_PATH:$GCC32_PATH:$PATH"
 
-          # Пакуємо в AnyKernel3 ZIP для TWRP
-          anykernel3: true
-          anykernel3-url: https://github.com/osm0sis/AnyKernel3
-          anykernel3-branch: master
+          cd kernel_source
 
-      # ── Крок 5: Зберігаємо артефакт ──────────────────────────
-      - name: Upload kernel ZIP
-        if: success()
+          # Визначаємо компілятор
+          CLANG_BIN=$(find "$CLANG_PATH" -name "clang" -type f | head -1)
+          echo "Using clang: $CLANG_BIN"
+
+          make O=out ARCH=arm64 cust_defconfig
+
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            LLVM=1 LLVM_IAS=1 \
+            Image.gz dtbo.img 2>&1 | tee build.log
+
+          echo "✅ Build done"
+          ls out/arch/arm64/boot/
+
+      # ── Пакуємо в AnyKernel3 ZIP ──────────────────────────────
+      - name: Package with AnyKernel3
+        run: |
+          git clone --depth=1 \
+            https://github.com/osm0sis/AnyKernel3 \
+            AnyKernel3
+
+          # Прибираємо приклади пристроїв з AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
+
+          cp kernel_source/out/arch/arm64/boot/Image.gz AnyKernel3/
+          cp kernel_source/out/arch/arm64/boot/dtbo.img AnyKernel3/ 2>/dev/null || true
+
+          # Збираємо DTB якщо є
+          find kernel_source/out/arch/arm64/boot/dts -name "*.dtb" \
+            -exec cat {} >> AnyKernel3/dtb \; 2>/dev/null || true
+
+          cd AnyKernel3
+          zip -r9 \
+            "../SukiSU-SUSFS-KPM-joyeuse-$(date +%Y%m%d-%H%M).zip" \
+            . -x ".git*"
+
+          cd ..
+          echo "✅ ZIP created"
+          ls -lh *.zip
+
+      # ── Зберігаємо артефакт ───────────────────────────────────
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: "SukiSU-SUSFS-KPM-joyeuse-${{ github.run_number }}"
           path: "*.zip"
           retention-days: 7
-
-      - name: Summary
-        if: always()
-        run: |
-          echo "=================================="
-          echo "  Build Summary"
-          echo "=================================="
-          echo "  Device  : Redmi Note 9 Pro (joyeuse)"
-          echo "  Kernel  : sm6250 sixteen-qpr2 (4.14)"
-          echo "  SukiSU  : susfs-main branch"
-          echo "  SUSFS   : вбудований (в susfs-main)"
-          echo "  KPM     : CONFIG_KPM=y"
-          echo "  KALLSYMS: CONFIG_KALLSYMS=y + ALL=y"
-          echo ""
-          echo "  Manager APK:"
-          echo "  https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases"
-          echo ""
-          echo "  ⚠️  KPM на 4.14 — експериментально!"
-          echo "  Завжди майте резервну копію boot.img"
