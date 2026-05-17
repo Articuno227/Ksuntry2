@@ -71,7 +71,7 @@ jobs:
         # ── Збірка ядра ───────────────────────────────────────────
       - name: Build kernel
         run: |
-          # Додаємо в PATH лише наш локальний Clang
+          # Додаємо в PATH тільки наш локальний Clang
           export PATH="$(pwd)/clang/bin:$PATH"
 
           cd kernel_source
@@ -79,18 +79,18 @@ jobs:
           # Генеруємо .config з defconfig
           make O=out ARCH=arm64 cust_defconfig
 
-          # Компілюємо, використовуючи Clang для C-коду та системний GCC для лінкування/асемблера
+          # Компілюємо, використовуючи Clang як головний компілятор та системний GCC як лінкер/асемблер
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
+            KCFLAGS="-Dcompat_uptr_t=__u32" \
             Image.gz dtbs
 
           echo "--- Boot artifacts ---"
           ls -lh out/arch/arm64/boot/
 
-          
       # ── Пакуємо в AnyKernel3 ZIP ──────────────────────────────
       - name: Package with AnyKernel3
         run: |
