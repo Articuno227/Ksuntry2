@@ -67,26 +67,26 @@ jobs:
           rm clang.tar.gz
           echo "✅ Clang ready"
           clang/bin/clang --version
-
+          
       # ── Завантажуємо GCC ──────────────────────────────────────
-            # ── Завантажуємо GCC (Стабільні prebuilts з AOSP) ─────────
       - name: Download GCC toolchains
         run: |
-          # Клонуємо GCC 64-bit (aarch64) з глибиною 1 для швидкості
           git clone --depth=1 \
             https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
             gcc64
-          
-          # Клонуємо GCC 32-bit (arm)
           git clone --depth=1 \
             https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
             gcc32
-            
-          echo "✅ GCC toolchains cloned from AOSP"
+          echo "✅ GCC ready"
 
+      # ── Фікс сумісності типів Clang (filter.h) ────────────────
+      - name: Fix filter.h compat_uptr_t error
+        run: |
+          # Впроваджуємо необхідний заголовочний файл компіляції сумісності
+          sed -i '1s/^/#include <linux\/compat.h>\n/' kernel_source/include/linux/filter.h
+          echo "✅ Applied compat.h patch to filter.h"
 
       # ── Збірка ядра ───────────────────────────────────────────
-      # ──       # ── Збірка ядра ───────────────────────────────────────────
       - name: Build kernel
         run: |
           export PATH="$(pwd)/clang/bin:$(pwd)/gcc64/bin:$(pwd)/gcc32/bin:$PATH"
@@ -96,7 +96,7 @@ jobs:
           # Генеруємо .config з defconfig
           make O=out ARCH=arm64 cust_defconfig
 
-          # Компілюємо, явно вказавши Clang як компілятор, а ld.lld як лінкер
+          # Компілюємо
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang \
             LD=ld.lld \
