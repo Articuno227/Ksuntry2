@@ -82,9 +82,9 @@ jobs:
       # ── Фікс сумісності типів Clang (filter.h) ────────────────
       - name: Fix filter.h compat_uptr_t error
         run: |
-          # Впроваджуємо необхідний заголовочний файл компіляції сумісності
-          sed -i '1s/^/#include <linux\/compat.h>\n/' kernel_source/include/linux/filter.h
-          echo "✅ Applied compat.h patch to filter.h"
+          # Безпечно оголошуємо тип compat_uptr_t для уникнення циклічної залежності
+          sed -i '1s/^/typedef unsigned int compat_uptr_t;\n/' kernel_source/include/linux/filter.h
+          echo "✅ Explicit compat_uptr_t typedef added to filter.h"
 
       # ── Збірка ядра ───────────────────────────────────────────
       - name: Build kernel
@@ -96,7 +96,7 @@ jobs:
           # Генеруємо .config з defconfig
           make O=out ARCH=arm64 cust_defconfig
 
-          # Компілюємо
+          # Компілюємо ядра та модулі
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang \
             LD=ld.lld \
@@ -111,8 +111,8 @@ jobs:
             Image.gz dtbs
 
           echo "--- Boot artifacts ---"
-          ls -lh out/arch/arm64/boot/ || true
-
+          ls -lh out/arch/arm64/boot/
+          
       # ── Пакуємо в AnyKernel3 ZIP ──────────────────────────────
       - name: Package with AnyKernel3
         run: |
