@@ -86,7 +86,7 @@ jobs:
 
 
       # ── Збірка ядра ───────────────────────────────────────────
-      # ── Збірка ядра ───────────────────────────────────────────
+      # ──       # ── Збірка ядра ───────────────────────────────────────────
       - name: Build kernel
         run: |
           export PATH="$(pwd)/clang/bin:$(pwd)/gcc64/bin:$(pwd)/gcc32/bin:$PATH"
@@ -96,9 +96,15 @@ jobs:
           # Генеруємо .config з defconfig
           make O=out ARCH=arm64 cust_defconfig
 
-          # Компілюємо з повним виводом логів (без tail), щоб бачити реальні помилки
+          # Компілюємо, явно вказавши Clang як компілятор, а ld.lld як лінкер
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
