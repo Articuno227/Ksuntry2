@@ -86,6 +86,7 @@ jobs:
 
 
       # ── Збірка ядра ───────────────────────────────────────────
+      # ── Збірка ядра ───────────────────────────────────────────
       - name: Build kernel
         run: |
           export PATH="$(pwd)/clang/bin:$(pwd)/gcc64/bin:$(pwd)/gcc32/bin:$PATH"
@@ -95,7 +96,7 @@ jobs:
           # Генеруємо .config з defconfig
           make O=out ARCH=arm64 cust_defconfig
 
-          # Компілюємо
+          # Компілюємо тільки Image.gz та dtbs (дерево пристроїв)
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -103,10 +104,11 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
             LLVM=1 \
             LLVM_IAS=1 \
-            Image.gz dtbo.img 2>&1 | tail -50
+            Image.gz dtbs 2>&1 | tail -50
 
           echo "--- Boot artifacts ---"
-          ls -lh out/arch/arm64/boot/
+          ls -lh out/arch/arm64/boot/ || true
+          ls -lh out/arch/arm64/boot/dts/xiaomi/ || true
 
       # ── Пакуємо в AnyKernel3 ZIP ──────────────────────────────
       - name: Package with AnyKernel3
