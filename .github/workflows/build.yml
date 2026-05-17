@@ -55,12 +55,13 @@ jobs:
           tail -6 "$DEFCONFIG"
 
       # ── Завантажуємо Clang (ZyCromerZ — надійне джерело) ─────
+      # ── Завантажуємо Clang (AOSP Clang 14 — стабільний для 4.14) ──
       - name: Download Clang toolchain
         run: |
           mkdir -p clang
-          # ZyCromerZ Clang 14 — перевірений для Android 4.14 ядер
+          # Використовуємо стабільний Google AOSP Clang r450784d (Clang 14.0.6)
           wget -q --show-progress \
-            "https://github.com/ZyCromerZ/Clang/releases/download/14.0.6-20220612-release/Clang-14.0.6-20220612.tar.gz" \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r450784d.tar.gz" \
             -O clang.tar.gz
           tar -xf clang.tar.gz -C clang
           rm clang.tar.gz
