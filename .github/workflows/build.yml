@@ -79,13 +79,6 @@ jobs:
             gcc32
           echo "✅ GCC ready"
 
-      # ── Фікс сумісності типів Clang (filter.h) ────────────────
-      - name: Fix filter.h compat_uptr_t error
-        run: |
-          # Безпечно оголошуємо тип compat_uptr_t для уникнення циклічної залежності
-          sed -i '1s/^/typedef unsigned int compat_uptr_t;\n/' kernel_source/include/linux/filter.h
-          echo "✅ Explicit compat_uptr_t typedef added to filter.h"
-
       # ── Збірка ядра ───────────────────────────────────────────
       - name: Build kernel
         run: |
@@ -96,18 +89,14 @@ jobs:
           # Генеруємо .config з defconfig
           make O=out ARCH=arm64 cust_defconfig
 
-          # Компілюємо ядра та модулі
+          # Компілюємо з передачею сумісних прапорців та вимкненим LLVM_IAS
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang \
-            LD=ld.lld \
-            AR=llvm-ar \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            LLVM_IAS=0 \
+            KCFLAGS="-Dcompat_uptr_t=__u32" \
             Image.gz dtbs
 
           echo "--- Boot artifacts ---"
