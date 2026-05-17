@@ -96,19 +96,16 @@ jobs:
           # Генеруємо .config з defconfig
           make O=out ARCH=arm64 cust_defconfig
 
-          # Компілюємо тільки Image.gz та dtbs (дерево пристроїв)
+          # Компілюємо з повним виводом логів (без tail), щоб бачити реальні помилки
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            Image.gz dtbs 2>&1 | tail -50
+            Image.gz dtbs
 
           echo "--- Boot artifacts ---"
           ls -lh out/arch/arm64/boot/ || true
-          ls -lh out/arch/arm64/boot/dts/xiaomi/ || true
 
       # ── Пакуємо в AnyKernel3 ZIP ──────────────────────────────
       - name: Package with AnyKernel3
