@@ -68,39 +68,28 @@ jobs:
           echo "✅ Clang ready"
           clang/bin/clang --version
           
-      # ── Завантажуємо GCC ──────────────────────────────────────
-      - name: Download GCC toolchains
-        run: |
-          git clone --depth=1 \
-            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
-            gcc64
-          git clone --depth=1 \
-            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
-            gcc32
-          echo "✅ GCC ready"
-
-      # ── Збірка ядра ───────────────────────────────────────────
+        # ── Збірка ядра ───────────────────────────────────────────
       - name: Build kernel
         run: |
-          export PATH="$(pwd)/clang/bin:$(pwd)/gcc64/bin:$(pwd)/gcc32/bin:$PATH"
+          # Додаємо в PATH лише наш локальний Clang
+          export PATH="$(pwd)/clang/bin:$PATH"
 
           cd kernel_source
 
           # Генеруємо .config з defconfig
           make O=out ARCH=arm64 cust_defconfig
 
-          # Компілюємо з передачею сумісних прапорців та вимкненим LLVM_IAS
+          # Компілюємо, використовуючи Clang для C-коду та системний GCC для лінкування/асемблера
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-android- \
-            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-            LLVM_IAS=0 \
-            KCFLAGS="-Dcompat_uptr_t=__u32" \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
             Image.gz dtbs
 
           echo "--- Boot artifacts ---"
           ls -lh out/arch/arm64/boot/
+
           
       # ── Пакуємо в AnyKernel3 ZIP ──────────────────────────────
       - name: Package with AnyKernel3
