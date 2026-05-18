@@ -18,14 +18,8 @@ jobs:
             libelf-dev zip curl python3 lz4 zstd \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf \
             clang-14 lld-14 llvm-14
-          sudo ln -sf /usr/bin/clang-14        /usr/local/bin/clang
-          sudo ln -sf /usr/bin/lld-14          /usr/local/bin/lld
-          sudo ln -sf /usr/bin/llvm-ar-14      /usr/local/bin/llvm-ar
-          sudo ln -sf /usr/bin/llvm-nm-14      /usr/local/bin/llvm-nm
-          sudo ln -sf /usr/bin/llvm-objcopy-14 /usr/local/bin/llvm-objcopy
-          sudo ln -sf /usr/bin/llvm-objdump-14 /usr/local/bin/llvm-objdump
-          sudo ln -sf /usr/bin/llvm-strip-14   /usr/local/bin/llvm-strip
-          clang --version
+          clang-14 --version
+          ld.lld-14 --version
 
       - name: Clone kernel
         run: |
@@ -40,17 +34,15 @@ jobs:
           curl -LSs \
             "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
             | bash -s susfs-main
-          echo "SukiSU Ultra integrated"
 
       - name: Enable KPM in defconfig
         run: |
           DEFCONFIG="kernel_source/arch/arm64/configs/cust_defconfig"
           echo "" >> "$DEFCONFIG"
-          echo "# SukiSU KPM" >> "$DEFCONFIG"
           grep -q "CONFIG_KPM=y"          "$DEFCONFIG" || echo "CONFIG_KPM=y"          >> "$DEFCONFIG"
           grep -q "CONFIG_KALLSYMS=y"     "$DEFCONFIG" || echo "CONFIG_KALLSYMS=y"     >> "$DEFCONFIG"
           grep -q "CONFIG_KALLSYMS_ALL=y" "$DEFCONFIG" || echo "CONFIG_KALLSYMS_ALL=y" >> "$DEFCONFIG"
-          tail -6 "$DEFCONFIG"
+          tail -5 "$DEFCONFIG"
 
       - name: Build kernel
         run: |
@@ -58,11 +50,40 @@ jobs:
           make O=out ARCH=arm64 cust_defconfig
           make -j$(nproc --all) O=out \
             ARCH=arm64 \
-            CC=clang \
-            LD=ld.lld \
-            AR=llvm-ar \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
+            CC=clang-14 \
+            LD=ld.lld-14 \
+            AR=llvm-ar-14 \
+            NM=llvm-nm-14 \
+            OBJCOPY=llvm-objcopy-14 \
+            OBJDUMP=llvm-objdump-14 \
+            STRIP=llvm-strip-14 \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            Image.gz dtbs 2>&1 | tail -80
+          ls -lh out/arch/arm64/boot/
+
+      - name: Package with AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
+          cp kernel_source/out/arch/arm64/boot/Image.gz AnyKernel3/
+          find kernel_source/out/arch/arm64/boot/dts \
+            -name "*.dtb" -exec cat {} >> AnyKernel3/dtb \; 2>/dev/null || true
+          ZIP_NAME="SukiSU-SUSFS-KPM-joyeuse-$(date +%Y%m%d-%H%M).zip"
+          cd AnyKernel3
+          zip -r9 "../${ZIP_NAME}" . -x ".git*"
+          cd ..
+          ls -lh *.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: "SukiSU-SUSFS-KPM-joyeuse-${{ github.run_number }}"
+          path: "*.zip"
+          retention-days: 7            OBJCOPY=llvm-objcopy \
             OBJDUMP=llvm-objdump \
             STRIP=llvm-strip \
             CLANG_TRIPLE=aarch64-linux-gnu- \
