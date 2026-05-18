@@ -36,10 +36,27 @@ jobs:
         run: |
           cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
-          make -j$(nproc --all) O=out ARCH=arm64 CC=clang-14 LD=ld.lld-14 AR=llvm-ar-14 NM=llvm-nm-14 OBJCOPY=llvm-objcopy-14 OBJDUMP=llvm-objdump-14 STRIP=llvm-strip-14 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabihf- LLVM=1 LLVM_IAS=1 Image.gz dtbs 2>&1 | tee ../build.log || true
+          
+          # Вимикаємо LLVM_IAS та повертаємо фікс сумісності типів через KCFLAGS
+          make -j$(nproc --all) O=out ARCH=arm64 \
+            CC=clang-14 \
+            LD=ld.lld-14 \
+            AR=llvm-ar-14 \
+            NM=llvm-nm-14 \
+            OBJCOPY=llvm-objcopy-14 \
+            OBJDUMP=llvm-objdump-14 \
+            STRIP=llvm-strip-14 \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
+            KCFLAGS="-Dcompat_uptr_t=__u32" \
+            LLVM=1 \
+            LLVM_IAS=0 \
+            Image.gz dtbs 2>&1 | tee ../build.log || true
+            
           grep -i "error:" ../build.log | head -30 || true
           ls -lh out/arch/arm64/boot/ || true
-
+          
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
