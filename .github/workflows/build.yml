@@ -35,11 +35,12 @@ jobs:
           grep -q "CONFIG_KPM=y" "$D" || echo "CONFIG_KPM=y" >> "$D"
           grep -q "CONFIG_KALLSYMS=y" "$D" || echo "CONFIG_KALLSYMS=y" >> "$D"
           grep -q "CONFIG_KALLSYMS_ALL=y" "$D" || echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
-
-          # Фіксуємо NR_CPUS для lb tracepoint
-          grep -q "CONFIG_NR_CPUS=256" "$D" || echo "CONFIG_NR_CPUS=256" >> "$D"
           
-          # SUSFS конфіги (тільки якщо їх ще нема)
+          # Фіксуємо NR_CPUS - видаляємо старий і додаємо новий
+          sed -i '/CONFIG_NR_CPUS=/d' "$D"
+          echo "CONFIG_NR_CPUS=256" >> "$D"
+          
+          # SUSFS конфіги
           grep -q "CONFIG_SUSFS=y" "$D" || echo "CONFIG_SUSFS=y" >> "$D"
           grep -q "CONFIG_SUSFS_SUS_PATH=y" "$D" || echo "CONFIG_SUSFS_SUS_PATH=y" >> "$D"
           grep -q "CONFIG_SUSFS_VNODE_MASK=y" "$D" || echo "CONFIG_SUSFS_VNODE_MASK=y" >> "$D"
