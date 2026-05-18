@@ -36,9 +36,9 @@ jobs:
           grep -q "CONFIG_KALLSYMS=y" "$D" || echo "CONFIG_KALLSYMS=y" >> "$D"
           grep -q "CONFIG_KALLSYMS_ALL=y" "$D" || echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
           
-          # Фіксуємо NR_CPUS - видаляємо старий і додаємо новий
-          sed -i '/CONFIG_NR_CPUS=/d' "$D"
-          echo "CONFIG_NR_CPUS=256" >> "$D"
+          # Вимикаємо SCHEDSTATS (несумісний tracepoint)
+          sed -i '/CONFIG_SCHEDSTATS=/d' "$D"
+          echo "CONFIG_SCHEDSTATS=n" >> "$D"
           
           # SUSFS конфіги
           grep -q "CONFIG_SUSFS=y" "$D" || echo "CONFIG_SUSFS=y" >> "$D"
