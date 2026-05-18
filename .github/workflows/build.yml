@@ -81,4 +81,71 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
             LLVM=1 \
             LLVM_IAS=0 \
-            KCFLAGS="-](#)
+            KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-error -Dsusfs_is_vnode_masked(x)=0" \
+            AFLAGS="-Wa,-W" \
+            Image dtbs 2>&1 | tee ../build.log
+
+          # Перевіряємо помилки в логах
+          if grep -i "error:" ../build.log; then
+            echo "❌ КРИТИЧНІ ПОМИЛКИ ЗНАЙДЕНІ В ЛОГАХ:"
+            grep -i "error:" ../build.log | head -30
+            exit 1
+          fi
+
+          echo "=== Перевірка вихідних файлів ==="
+          ls -lh out/arch/arm64/boot/
+
+          # Перевіряємо що ядро зібралося успішно
+          if [ ! -f out/arch/arm64/boot/Image ] && [ ! -f out/arch/arm64/boot/Image.gz ] && [ ! -f out/arch/arm64/boot/Image-dtb ]; then
+            echo "❌ ПОМИЛКА: Ядро не зібралося! Жоден Image файл не знайдено."
+            exit 1
+          fi
+          
+          echo "✓ Ядро зібрано успішно!"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: build.log
+          retention-days: 3
+
+      - name: Package
+        run: |
+          set -e
+          
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
+
+          # Динамічна перевірка: якщо зібрався Image, стискаємо його в Image.gz вручну
+          if [ -f kernel_source/out/arch/arm64/boot/Image ]; then
+            echo "✓ Знайдено нестиснуте ядро Image, стискаємо в Image.gz..."
+            gzip -c9 kernel_source/out/arch/arm64/boot/Image > AnyKernel3/Image.gz
+          elif [ -f kernel_source/out/arch/arm64/boot/Image.gz ]; then
+            echo "✓ Знайдено готове Image.gz, копіюємо..."
+            cp kernel_source/out/arch/arm64/boot/Image.gz AnyKernel3/
+          elif [ -f kernel_source/out/arch/arm64/boot/Image-dtb ]; then
+            echo "✓ Знайдено вшитий Image-dtb, стискаємо в Image.gz..."
+            gzip -c9 kernel_source/out/arch/arm64/boot/Image-dtb > AnyKernel3/Image.gz
+          else
+            echo "❌ КРИТИЧНА ПОМИЛКА: жодного файлу ядра не знайдено!"
+            exit 1
+          fi
+
+          # Збираємо dtb, якщо вони скомпілювалися окремо
+          find kernel_source/out/arch/arm64/boot/dts -name "*.dtb" -exec cat {} >> AnyKernel3/dtb \; 2>/dev/null || true
+
+          cd AnyKernel3
+          zip -r9 "../SukiSU-joyeuse.zip" . -x ".git*"
+          cd ..
+          ls -lh *.zip
+          
+          echo "✓ Пакет готовий для завантаження!"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: SukiSU-joyeuse-${{ github.run_number }}
+          path: "*.zip"
+          retention-days: 7
