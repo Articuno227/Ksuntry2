@@ -54,13 +54,15 @@ jobs:
           echo "✅ KPM flags added"
           tail -6 "$DEFCONFIG"
 
-        # ── Завантажуємо Clang 14 (Google AOSP з фіксом розпакування) ──
+        # ── Завантажуємо Clang 14 (ZyCromerZ з виправленим curl) ──
       - name: Download Clang toolchain
         run: |
           mkdir -p clang
-          # Завантажуємо архів, декодуємо з base64 та розпаковуємо на льоту
-          curl -LSs "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r450784d.tar.gz" \
-            | base64 -d | tar -xz -C clang
+          # Використовуємо curl з параметром -L (follow redirects) для успішного завантаження з GitHub Releases
+          curl -LSs "https://github.com/ZyCromerZ/Clang/releases/download/14.0.6-20220612-release/Clang-14.0.6-20220612.tar.gz" \
+            -o clang.tar.gz
+          tar -xf clang.tar.gz -C clang
+          rm clang.tar.gz
           echo "✅ Clang ready"
           clang/bin/clang --version
 
@@ -68,10 +70,10 @@ jobs:
       - name: Download GCC toolchains
         run: |
           git clone --depth=1 \
-            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 \
             gcc64
           git clone --depth=1 \
-            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 \
             gcc32
           echo "✅ GCC ready"
 
@@ -85,7 +87,7 @@ jobs:
           # Генеруємо .config з defconfig
           make O=out ARCH=arm64 cust_defconfig
 
-          # Компілюємо (прибрали tail -50, щоб бачити реальні помилки, якщо вони виникнуть)
+          # Компілюємо без tail -50, щоб бачити чисті логи помилок C-коду, якщо вони виникнуть
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang \
             LD=ld.lld \
@@ -101,7 +103,7 @@ jobs:
 
           echo "--- Boot artifacts ---"
           ls -lh out/arch/arm64/boot/
-
+          
       # ── Пакуємо в AnyKernel3 ZIP ──────────────────────────────
       - name: Package with AnyKernel3
         run: |
