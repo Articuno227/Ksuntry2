@@ -37,7 +37,7 @@ jobs:
           cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
           
-          # Повертаємо LLVM_IAS=1, але гасимо суворі помилки асемблера через -Wno-error
+          # Вимикаємо LLVM_IAS, але через KCFLAGS і за допомогою -B явно вказуємо Clang, де шукати системний aarch64-linux-gnu-as
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang-14 \
             LD=ld.lld-14 \
@@ -50,8 +50,8 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
             LLVM=1 \
-            LLVM_IAS=1 \
-            KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-error -Wno-implicit-function-declaration" \
+            LLVM_IAS=0 \
+            KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-error -B/usr/bin/aarch64-linux-gnu-" \
             Image.gz dtbs 2>&1 | tee ../build.log || true
             
           grep -i "error:" ../build.log | head -30 || true
