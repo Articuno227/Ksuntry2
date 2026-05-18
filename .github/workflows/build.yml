@@ -41,8 +41,9 @@ jobs:
           cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
 
-          # Перетворюємо помилковий рядок на валідну асемблерну мітку (додаємо двокрапку)
-          sed -i 's/^ValidContext$/ValidContext:/g' arch/arm64/kernel/entry.S
+          # Покращений фікс: шукаємо ValidContext, ігноруючи пробіли чи символи \r в кінці рядка,
+          # і чітко перетворюємо його на асемблерну мітку "ValidContext:"
+          sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S
           
           # Запускаємо збірку ядра
           make -j$(nproc --all) O=out ARCH=arm64 \
