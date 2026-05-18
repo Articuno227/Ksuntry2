@@ -3,7 +3,6 @@ name: Build SukiSU Ultra
 on:
   workflow_dispatch:
 
-  # Фіксимо ворнінг від GitHub щодо Node.js 20 на рівні всього воркфлоу
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -40,13 +39,11 @@ jobs:
         run: |
           cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
-
+          
           # Залишаємо фікс для entry.S
           sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S
-
-          # Запускаємо збірку ядра
-          # Переносимо абсолютно всі критичні макроси підміни (SukiSU + Android 16 dm-user фікс)
-          # безпосередньо в дефініцію компілятора CC.
+          
+          # Запускаємо збірку ядра з оптимізованими флагами
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="clang-14 -DValidContext= -DValidContext:= -DBIO_MAX_PAGES=256 -Wno-implicit-function-declaration -Wno-error" \
             LD=ld.lld-14 \
@@ -62,13 +59,24 @@ jobs:
             LLVM_IAS=0 \
             KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-error" \
             AFLAGS="-Wa,-W" \
-            Image dtbs 2>&1 | tee ../build.log || true
-            
-          grep -i "error:" ../build.log | head -30 || true
+            Image dtbs 2>&1 | tee ../build.log
+          
+          # Перевіряємо помилки
+          if grep -i "error:" ../build.log; then
+            echo "=== КРИТИЧНІ ПОМИЛКИ ЗНАЙДЕНІ ==="
+            grep -i "error:" ../build.log | head -30
+            exit 1
+          fi
           
           echo "=== Перевірка вихідних файлів ==="
-          ls -lh out/arch/arm64/boot/ || true
+          ls -lh out/arch/arm64/boot/
           
+          # Перевіряємо що ядро зібралося
+          if [ ! -f out/arch/arm64/boot/Image ] && [ ! -f out/arch/arm64/boot/Image.gz ] && [ ! -f out/arch/arm64/boot/Image-dtb ]; then
+            echo "ПОМИЛКА: Ядро не зібралося!"
+            exit 1
+          fi
+
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -93,7 +101,7 @@ jobs:
             echo "Знайдено вшитий Image-dtb, стискаємо в Image.gz..."
             gzip -c9 kernel_source/out/arch/arm64/boot/Image-dtb > AnyKernel3/Image.gz
           else
-            echo "Критична помилка: жодного файлу ядра не знайдено!"
+            echo "КРИТИЧНА ПОМИЛКА: жодного файлу ядра не знайдено!"
             exit 1
           fi
           
