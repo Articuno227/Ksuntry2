@@ -41,9 +41,11 @@ jobs:
           cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
 
-          # Покращений фікс: шукаємо ValidContext, ігноруючи пробіли чи символи \r в кінці рядка,
-          # і чітко перетворюємо його на асемблерну мітку "ValidContext:"
+          # Фікс для асемблерного файлу entry.S (вже перевірений і робочий)
           sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S
+
+          # Новий фікс для C-файлу sys.c: повністю видаляємо помилковий рядок ValidContext
+          sed -i '/ValidContext/d' arch/arm64/kernel/sys.c
           
           # Запускаємо збірку ядра
           make -j$(nproc --all) O=out ARCH=arm64 \
