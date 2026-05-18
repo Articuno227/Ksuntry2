@@ -1,116 +1,61 @@
-name: Build SukiSU Ultra + SUSFS + KPM
+name: Build SukiSU Ultra
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: "joyeuse | sm6250 | SukiSU+SUSFS+KPM"
     runs-on: ubuntu-22.04
     timeout-minutes: 120
 
     steps:
-      - name: Install dependencies and Clang
+      - name: Install tools
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y \
-            git bc bison flex libssl-dev make \
-            libelf-dev zip curl python3 lz4 zstd \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf \
-            clang-14 lld-14 llvm-14
+          sudo apt-get install -y git bc bison flex libssl-dev make libelf-dev zip curl python3 lz4 zstd gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf clang-14 lld-14 llvm-14
           clang-14 --version
-          ld.lld-14 --version
 
       - name: Clone kernel
         run: |
-          git clone --depth=1 \
-            --branch sixteen-qpr2 \
-            https://github.com/PixelOS-Devices/android_kernel_xiaomi_sm6250 \
-            kernel_source
+          git clone --depth=1 --branch sixteen-qpr2 https://github.com/PixelOS-Devices/android_kernel_xiaomi_sm6250 kernel_source
 
-      - name: Integrate SukiSU Ultra (susfs-main)
+      - name: Integrate SukiSU
         run: |
           cd kernel_source
-          curl -LSs \
-            "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
-            | bash -s susfs-main
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
 
-      - name: Enable KPM in defconfig
+      - name: Enable KPM
         run: |
-          DEFCONFIG="kernel_source/arch/arm64/configs/cust_defconfig"
-          echo "" >> "$DEFCONFIG"
-          grep -q "CONFIG_KPM=y"          "$DEFCONFIG" || echo "CONFIG_KPM=y"          >> "$DEFCONFIG"
-          grep -q "CONFIG_KALLSYMS=y"     "$DEFCONFIG" || echo "CONFIG_KALLSYMS=y"     >> "$DEFCONFIG"
-          grep -q "CONFIG_KALLSYMS_ALL=y" "$DEFCONFIG" || echo "CONFIG_KALLSYMS_ALL=y" >> "$DEFCONFIG"
-          tail -5 "$DEFCONFIG"
+          D="kernel_source/arch/arm64/configs/cust_defconfig"
+          grep -q "CONFIG_KPM=y" "$D" || echo "CONFIG_KPM=y" >> "$D"
+          grep -q "CONFIG_KALLSYMS=y" "$D" || echo "CONFIG_KALLSYMS=y" >> "$D"
+          grep -q "CONFIG_KALLSYMS_ALL=y" "$D" || echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
+          tail -5 "$D"
 
-      - name: Build kernel
+      - name: Build
         run: |
           cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
-          make -j$(nproc --all) O=out \
-            ARCH=arm64 \
-            CC=clang-14 \
-            LD=ld.lld-14 \
-            AR=llvm-ar-14 \
-            NM=llvm-nm-14 \
-            OBJCOPY=llvm-objcopy-14 \
-            OBJDUMP=llvm-objdump-14 \
-            STRIP=llvm-strip-14 \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            Image.gz dtbs 2>&1 | tail -80
+          make -j$(nproc --all) O=out ARCH=arm64 CC=clang-14 LD=ld.lld-14 AR=llvm-ar-14 NM=llvm-nm-14 OBJCOPY=llvm-objcopy-14 OBJDUMP=llvm-objdump-14 STRIP=llvm-strip-14 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabihf- LLVM=1 LLVM_IAS=1 Image.gz dtbs 2>&1 | tail -80
           ls -lh out/arch/arm64/boot/
 
-      - name: Package with AnyKernel3
+      - name: Package
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
           cp kernel_source/out/arch/arm64/boot/Image.gz AnyKernel3/
-          find kernel_source/out/arch/arm64/boot/dts \
-            -name "*.dtb" -exec cat {} >> AnyKernel3/dtb \; 2>/dev/null || true
-          ZIP_NAME="SukiSU-SUSFS-KPM-joyeuse-$(date +%Y%m%d-%H%M).zip"
+          find kernel_source/out/arch/arm64/boot/dts -name "*.dtb" -exec cat {} >> AnyKernel3/dtb \; 2>/dev/null || true
           cd AnyKernel3
-          zip -r9 "../${ZIP_NAME}" . -x ".git*"
+          zip -r9 "../SukiSU-joyeuse.zip" . -x ".git*"
           cd ..
           ls -lh *.zip
 
-      - name: Upload artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: "SukiSU-SUSFS-KPM-joyeuse-${{ github.run_number }}"
+          name: SukiSU-joyeuse-${{ github.run_number }}
           path: "*.zip"
-          retention-days: 7            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            Image.gz dtbo.img 2>&1 | tail -80
-          ls -lh out/arch/arm64/boot/
-
-      - name: Package with AnyKernel3
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
-          cp kernel_source/out/arch/arm64/boot/Image.gz AnyKernel3/
-          cp kernel_source/out/arch/arm64/boot/dtbo.img AnyKernel3/ 2>/dev/null || true
-          find kernel_source/out/arch/arm64/boot/dts \
-            -name "*.dtb" -exec cat {} >> AnyKernel3/dtb \; 2>/dev/null || true
-          ZIP_NAME="SukiSU-SUSFS-KPM-joyeuse-$(date +%Y%m%d-%H%M).zip"
-          cd AnyKernel3
-          zip -r9 "../${ZIP_NAME}" . -x ".git*"
-          cd ..
-          ls -lh *.zip
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
+          retention-days: 7        with:
           name: "SukiSU-SUSFS-KPM-joyeuse-${{ github.run_number }}"
           path: "*.zip"
           retention-days: 7
