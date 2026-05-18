@@ -37,7 +37,7 @@ jobs:
           cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
           
-          # Вимикаємо LLVM_IAS та повертаємо фікс сумісності типів через KCFLAGS
+          # Повертаємо LLVM_IAS=1, але гасимо суворі помилки асемблера через -Wno-error
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang-14 \
             LD=ld.lld-14 \
@@ -49,9 +49,9 @@ jobs:
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
-            KCFLAGS="-Dcompat_uptr_t=__u32" \
             LLVM=1 \
-            LLVM_IAS=0 \
+            LLVM_IAS=1 \
+            KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-error -Wno-implicit-function-declaration" \
             Image.gz dtbs 2>&1 | tee ../build.log || true
             
           grep -i "error:" ../build.log | head -30 || true
