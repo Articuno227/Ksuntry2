@@ -36,8 +36,12 @@ jobs:
         run: |
           cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
+
+          # Виправлення синтаксичної помилки динамічного патчу SukiSU в entry.S
+          # Перетворюємо проблемний рядок ValidContext на безпечний коментар
+          sed -i 's/^ValidContext/\/\/ ValidContext/g' arch/arm64/kernel/entry.S
           
-          # Використовуємо зовнішній асемблер, але через -Wa,-W передаємо команду ігнорувати невідомі прапорці
+          # Запускаємо збірку з перевіреними прапорцями
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang-14 \
             LD=ld.lld-14 \
