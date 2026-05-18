@@ -27,47 +27,47 @@ jobs:
           cd kernel_source
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
 
-      - name: Enable KPM
+      - name: Enable KPM & SUSFS Config
         run: |
           D="kernel_source/arch/arm64/configs/cust_defconfig"
+          
+          # Основні конфіги
           grep -q "CONFIG_KPM=y" "$D" || echo "CONFIG_KPM=y" >> "$D"
           grep -q "CONFIG_KALLSYMS=y" "$D" || echo "CONFIG_KALLSYMS=y" >> "$D"
           grep -q "CONFIG_KALLSYMS_ALL=y" "$D" || echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
           
-          # Залізобетонно вмикаємо підтримку підсистеми SUSFS у конфігу ядра,
-          # щоб усі функції маскування (включаючи susfs_is_vnode_masked) скомпілювалися
-          echo "CONFIG_SUSFS=y" >> "$D"
-          echo "CONFIG_SUSFS_SUS_PATH=y" >> "$D"
-          echo "CONFIG_SUSFS_VNODE_MASK=y" >> "$D"
-          echo "CONFIG_SUSFS_TRY_UMOUNT=y" >> "$D"
-          echo "CONFIG_SUSFS_SPOOF_UNAME=y" >> "$D"
-          echo "CONFIG_SUSFS_ENABLE_LOG=y" >> "$D"
-          echo "CONFIG_SUSFS_HIDE_PORTS=y" >> "$D"
+          # SUSFS конфіги (тільки якщо їх ще нема)
+          grep -q "CONFIG_SUSFS=y" "$D" || echo "CONFIG_SUSFS=y" >> "$D"
+          grep -q "CONFIG_SUSFS_SUS_PATH=y" "$D" || echo "CONFIG_SUSFS_SUS_PATH=y" >> "$D"
+          grep -q "CONFIG_SUSFS_VNODE_MASK=y" "$D" || echo "CONFIG_SUSFS_VNODE_MASK=y" >> "$D"
+          grep -q "CONFIG_SUSFS_TRY_UMOUNT=y" "$D" || echo "CONFIG_SUSFS_TRY_UMOUNT=y" >> "$D"
+          grep -q "CONFIG_SUSFS_SPOOF_UNAME=y" "$D" || echo "CONFIG_SUSFS_SPOOF_UNAME=y" >> "$D"
+          grep -q "CONFIG_SUSFS_ENABLE_LOG=y" "$D" || echo "CONFIG_SUSFS_ENABLE_LOG=y" >> "$D"
+          grep -q "CONFIG_SUSFS_HIDE_PORTS=y" "$D" || echo "CONFIG_SUSFS_HIDE_PORTS=y" >> "$D"
           
+          echo "=== Конфіг готовий ==="
           tail -20 "$D"
 
       - name: Build
         run: |
+          set -e
           cd kernel_source
+          
           make O=out ARCH=arm64 cust_defconfig
 
           # 1. Фікс для асемблера entry.S (перевірений, працює)
           sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S
 
-          # 2. ЖОРСТКИЙ ХАК ДЛЯ FILESYSTEM / SUSFS:
-          # Примусово додаємо susfs.o до списку збірки файлової системи, 
-          # ігноруючи будь-які перевірки умов у Makefile
+          # 2. Впровадження susfs.o у fs/Makefile
           if [ -f fs/Makefile ]; then
-            echo "obj-y += susfs.o" >> fs/Makefile
-            echo "Впроваджено susfs.o безпосередньо в fs/Makefile"
+            if ! grep -q "obj-y += susfs.o" fs/Makefile; then
+              echo "obj-y += susfs.o" >> fs/Makefile
+              echo "✓ Впроваджено susfs.o в fs/Makefile"
+            fi
           fi
 
-          # 3. СТРАХОВКА НА РІВНІ ПРЕПРОЦЕСОРА (Запобігання undefined symbol):
-          # Якщо лінкер все одно вередує, ми оголосимо susfs_is_vnode_masked 
-          # як inline або слабкий макрос, щоб Clang не шукав зовнішній символ.
-          # Додаємо це в KCFLAGS та CC
-          
-          # Запускаємо збірку ядра
+          # 3. Запускаємо збірку ядра
+          echo "=== Запуск компіляції ядра ==="
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="clang-14 -DValidContext= -DValidContext:= -DBIO_MAX_PAGES=256 -Wno-implicit-function-declaration -Wno-error" \
             LD=ld.lld-14 \
@@ -81,60 +81,4 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
             LLVM=1 \
             LLVM_IAS=0 \
-            KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-error -Dsusfs_is_vnode_masked(x)=0" \
-            AFLAGS="-Wa,-W" \
-            Image dtbs 2>&1 | tee ../build.log || true
-            
-          grep -i "error:" ../build.log | head -30 || true
-          
-          echo "=== Перевірка вихідних файлів ==="
-          ls -lh out/arch/arm64/boot/ || true
-          
-          # Перевіряємо що ядро зібралося
-          if [ ! -f out/arch/arm64/boot/Image ] && [ ! -f out/arch/arm64/boot/Image.gz ] && [ ! -f out/arch/arm64/boot/Image-dtb ]; then
-            echo "ПОМИЛКА: Ядро не зібралося!"
-            exit 1
-          fi
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log-${{ github.run_number }}
-          path: build.log
-          retention-days: 3
-          
-      - name: Package
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
-          
-          # Динамічна перевірка: якщо зібрався Image, стискаємо його в Image.gz вручну
-          if [ -f kernel_source/out/arch/arm64/boot/Image ]; then
-            echo "Знайдено нестиснуте ядро Image, стискаємо в Image.gz..."
-            gzip -c9 kernel_source/out/arch/arm64/boot/Image > AnyKernel3/Image.gz
-          elif [ -f kernel_source/out/arch/arm64/boot/Image.gz ]; then
-            echo "Знайдено готове Image.gz, копіюємо..."
-            cp kernel_source/out/arch/arm64/boot/Image.gz AnyKernel3/
-          elif [ -f kernel_source/out/arch/arm64/boot/Image-dtb ]; then
-            echo "Знайдено вшитий Image-dtb, стискаємо в Image.gz..."
-            gzip -c9 kernel_source/out/arch/arm64/boot/Image-dtb > AnyKernel3/Image.gz
-          else
-            echo "КРИТИЧНА ПОМИЛКА: жодного файлу ядра не знайдено!"
-            exit 1
-          fi
-          
-          # Збираємо dtb, якщо вони скомпілювалися окремо
-          find kernel_source/out/arch/arm64/boot/dts -name "*.dtb" -exec cat {} >> AnyKernel3/dtb \; 2>/dev/null || true
-          
-          cd AnyKernel3
-          zip -r9 "../SukiSU-joyeuse.zip" . -x ".git*"
-          cd ..
-          ls -lh *.zip
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: SukiSU-joyeuse-${{ github.run_number }}
-          path: "*.zip"
-          retention-days: 7
+            KCFLAGS="-](#)
