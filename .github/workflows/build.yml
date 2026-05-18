@@ -54,17 +54,15 @@ jobs:
           echo "✅ KPM flags added"
           tail -6 "$DEFCONFIG"
 
-      # ── Завантажуємо Clang (Публічне дзеркало GitLab) ─────────
-            # ── Завантажуємо Clang 14 (Google AOSP) ────────────────────
+        # ── Завантажуємо Clang 14 (Google AOSP з фіксом розпакування) ──
       - name: Download Clang toolchain
         run: |
           mkdir -p clang
-          # Використовуємо стабільний Google AOSP Clang r450784d (Clang 14.0.6)
+          # Завантажуємо архів, декодуємо з base64 та розпаковуємо на льоту
           curl -LSs "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r450784d.tar.gz" \
-            -o clang.tar.gz
-          tar -xf clang.tar.gz -C clang
-          rm clang.tar.gz
+            | base64 -d | tar -xz -C clang
           echo "✅ Clang ready"
+          clang/bin/clang --version
 
       # ── Завантажуємо офіційні AOSP GCC 4.9 toolchains ──────────
       - name: Download GCC toolchains
@@ -80,7 +78,6 @@ jobs:
       # ── Збірка ядра ───────────────────────────────────────────
       - name: Build kernel
         run: |
-          # Правильно експортуємо ВСІ три папки з бінарниками в PATH
           export PATH="$(pwd)/clang/bin:$(pwd)/gcc64/bin:$(pwd)/gcc32/bin:$PATH"
 
           cd kernel_source
@@ -88,7 +85,7 @@ jobs:
           # Генеруємо .config з defconfig
           make O=out ARCH=arm64 cust_defconfig
 
-          # Збірка з повним набором LLVM-інструментів для Clang 14
+          # Компілюємо (прибрали tail -50, щоб бачити реальні помилки, якщо вони виникнуть)
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang \
             LD=ld.lld \
