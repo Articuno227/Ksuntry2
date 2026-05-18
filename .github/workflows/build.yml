@@ -55,7 +55,4 @@ jobs:
         with:
           name: SukiSU-joyeuse-${{ github.run_number }}
           path: "*.zip"
-          retention-days: 7        with:
-          name: "SukiSU-SUSFS-KPM-joyeuse-${{ github.run_number }}"
-          path: "*.zip"
           retention-days: 7
