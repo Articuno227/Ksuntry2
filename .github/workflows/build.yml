@@ -41,12 +41,11 @@ jobs:
           cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
 
-          # Залишаємо фікс для entry.S, про всяк випадок
+          # Залишаємо фікс для entry.S
           sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S
 
-          # Додаємо жорстку макрос-підміну: якщо Clang зустріне "ValidContext" або "ValidContext:",
-          # він автоматично перетворить це на пусте місце на рівні препроцесора C.
-          # Також додаємо -Wno-implicit-function-declaration для страховки суміжних хуків.
+          # Запускаємо збірку ядра
+          # Додаємо -DBIO_MAX_PAGES=256 для фіксу сумісності драйвера dm-user з новими вимогами Android 16
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="clang-14 -DValidContext= -DValidContext:= " \
             LD=ld.lld-14 \
@@ -60,7 +59,7 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
             LLVM=1 \
             LLVM_IAS=0 \
-            KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-error -Wno-implicit-function-declaration" \
+            KCFLAGS="-Dcompat_uptr_t=__u32 -DBIO_MAX_PAGES=256 -Wno-error -Wno-implicit-function-declaration" \
             AFLAGS="-Wa,-W" \
             Image dtbs 2>&1 | tee ../build.log || true
             
