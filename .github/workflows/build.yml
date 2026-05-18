@@ -51,11 +51,12 @@ jobs:
           cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
 
-          # Перевірений фікс для entry.S
+          # Повертаємо перевірений асемблерний фікс для entry.S
           sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S
 
-          # Запускаємо фінальну збірку ядра. 
-          # Перемикаємо LLVM_IAS=0 для кращої сумісності лінкера з макросами патчу 4.14
+          # Запускаємо збірку ядра
+          # Передаємо всі CONFIG_SUSFS безпосередньо у виклик make, щоб система збірки
+          # була ЗМУШЕНА скомпілювати файли маскування SUSFS
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="clang-14 -DValidContext= -DValidContext:= -DBIO_MAX_PAGES=256 -Wno-implicit-function-declaration -Wno-error" \
             LD=ld.lld-14 \
@@ -71,6 +72,13 @@ jobs:
             LLVM_IAS=0 \
             KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-error" \
             AFLAGS="-Wa,-W" \
+            CONFIG_SUSFS=y \
+            CONFIG_SUSFS_SUS_PATH=y \
+            CONFIG_SUSFS_VNODE_MASK=y \
+            CONFIG_SUSFS_TRY_UMOUNT=y \
+            CONFIG_SUSFS_SPOOF_UNAME=y \
+            CONFIG_SUSFS_ENABLE_LOG=y \
+            CONFIG_SUSFS_HIDE_PORTS=y \
             Image dtbs 2>&1 | tee ../build.log || true
             
           grep -i "error:" ../build.log | head -30 || true
