@@ -55,37 +55,51 @@ jobs:
           tail -6 "$DEFCONFIG"
 
       # ── Завантажуємо Clang (Публічне дзеркало GitLab) ─────────
-            # ── Завантажуємо Clang (Офіційний пребілт AOSP Clang 14) ──
+            # ── Завантажуємо Clang 14 (Google AOSP) ────────────────────
       - name: Download Clang toolchain
         run: |
           mkdir -p clang
-          # Завантажуємо офіційний стабільний Clang r450784d (14.0.6) з Android CI
-          wget -q --show-progress "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-13.0.0_r1/clang-r450784d.tar.gz" -O clang.tar.gz
-          
-          # Розпаковуємо у створену папку
+          # Використовуємо стабільний Google AOSP Clang r450784d (Clang 14.0.6)
+          curl -LSs "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r450784d.tar.gz" \
+            -o clang.tar.gz
           tar -xf clang.tar.gz -C clang
           rm clang.tar.gz
           echo "✅ Clang ready"
-          clang/bin/clang --version
-          
-        # ── Збірка ядра ───────────────────────────────────────────
+
+      # ── Завантажуємо офіційні AOSP GCC 4.9 toolchains ──────────
+      - name: Download GCC toolchains
+        run: |
+          git clone --depth=1 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
+            gcc64
+          git clone --depth=1 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
+            gcc32
+          echo "✅ GCC ready"
+
+      # ── Збірка ядра ───────────────────────────────────────────
       - name: Build kernel
         run: |
-          # Додаємо в PATH тільки наш локальний Clang
-          export PATH="$(pwd)/clang/bin:$PATH"
+          # Правильно експортуємо ВСІ три папки з бінарниками в PATH
+          export PATH="$(pwd)/clang/bin:$(pwd)/gcc64/bin:$(pwd)/gcc32/bin:$PATH"
 
           cd kernel_source
 
           # Генеруємо .config з defconfig
           make O=out ARCH=arm64 cust_defconfig
 
-          # Компілюємо, використовуючи Clang як головний компілятор та системний GCC як лінкер/асемблер
+          # Збірка з повним набором LLVM-інструментів для Clang 14
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
             CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
-            KCFLAGS="-Dcompat_uptr_t=__u32" \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
             Image.gz dtbs
 
           echo "--- Boot artifacts ---"
