@@ -3,6 +3,10 @@ name: Build SukiSU Ultra
 on:
   workflow_dispatch:
 
+  # Фіксимо ворнінг від GitHub щодо Node.js 20 на рівні всього воркфлоу
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -37,11 +41,10 @@ jobs:
           cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
 
-          # Виправлення синтаксичної помилки динамічного патчу SukiSU в entry.S
-          # Перетворюємо проблемний рядок ValidContext на безпечний коментар
-          sed -i 's/^ValidContext/\/\/ ValidContext/g' arch/arm64/kernel/entry.S
+          # Перетворюємо помилковий рядок на валідну асемблерну мітку (додаємо двокрапку)
+          sed -i 's/^ValidContext$/ValidContext:/g' arch/arm64/kernel/entry.S
           
-          # Запускаємо збірку з перевіреними прапорцями
+          # Запускаємо збірку ядра
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC=clang-14 \
             LD=ld.lld-14 \
