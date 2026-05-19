@@ -33,12 +33,22 @@ jobs:
         run: |
           cd kernel_source
           D="arch/arm64/configs/cust_defconfig"
-          grep -q "CONFIG_KPM=y" "$D" || echo "CONFIG_KPM=y" >> "$D"
-          grep -q "CONFIG_KALLSYMS=y" "$D" || echo "CONFIG_KALLSYMS=y" >> "$D"
-          grep -q "CONFIG_KALLSYMS_ALL=y" "$D" || echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
-          # Жорстко встановлюємо кількість ядер для sm6250, щоб підстрахувати ядро
+          
+          # Базові налаштування
+          echo "CONFIG_KPM=y" >> "$D"
+          echo "CONFIG_KALLSYMS=y" >> "$D"
+          echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
           echo "CONFIG_NR_CPUS=8" >> "$D"
-
+          
+          # ФІКС: Активуємо BPF, щоб прибрати помилку 'bpf_stats_handler'
+          echo "CONFIG_BPF=y" >> "$D"
+          echo "CONFIG_BPF_SYSCALL=y" >> "$D"
+          echo "CONFIG_NET=y" >> "$D"
+          
+          # Переконуємось, що немає конфліктів
+          sed -i '/CONFIG_BPF_JIT/d' "$D"
+          echo "CONFIG_BPF_JIT=y" >> "$D"
+          
       - name: Reset and Optimize Cache
         uses: actions/cache@v4
         with:
