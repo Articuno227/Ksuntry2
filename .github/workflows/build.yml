@@ -67,15 +67,17 @@ jobs:
           sed -i '/bpf_stats_handler/d' kernel/sysctl.c
           sed -i 's/.*bpf_stats.*//g' include/linux/bpf.h
 
-          # 3. Впровадження susfs.o
+          # 3. Видаляємо проблемний lb tracepoint
+          sed -i '/#error "Unsupported NR_CPUS for lb tracepoint"/,+5d' include/trace/events/sched.h
+          sed -i '/^TRACE_EVENT(sched_stat_runtime/,/^);$/s/^/#COMMENTED: /' include/trace/events/sched.h
+
+          # 4. Впровадження susfs.o
           if [ -f fs/Makefile ]; then
             if ! grep -q "obj-y += susfs.o" fs/Makefile; then
               echo "obj-y += susfs.o" >> fs/Makefile
-              echo "✓ Впроваджено susfs.o в fs/Makefile"
             fi
           fi
 
-          # 4. Запускаємо збірку ядра
           echo "=== Запуск компіляції ядра ==="
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="clang-14 -DValidContext= -DValidContext:= -DBIO_MAX_PAGES=256 -Wno-implicit-function-declaration -Wno-error -Dsusfs_is_vnode_masked\(x\)=0" \
@@ -94,9 +96,8 @@ jobs:
             AFLAGS="-Wa,-W" \
             Image dtbs 2>&1 | tee ../build.log
 
-          # Перевіряємо помилки в логах
           if grep -i "error:" ../build.log; then
-            echo "❌ КРИТИЧНІ ПОМИЛКИ ЗНАЙДЕНІ В ЛОГАХ:"
+            echo "❌ КРИТИЧНІ ПОМИЛКИ:"
             grep -i "error:" ../build.log | head -30
             exit 1
           fi
@@ -104,9 +105,8 @@ jobs:
           echo "=== Перевірка вихідних файлів ==="
           ls -lh out/arch/arm64/boot/
 
-          # Перевіряємо що ядро зібралося успішно
           if [ ! -f out/arch/arm64/boot/Image ] && [ ! -f out/arch/arm64/boot/Image.gz ] && [ ! -f out/arch/arm64/boot/Image-dtb ]; then
-            echo "❌ ПОМИЛКА: Ядро не зібралося! Жоден Image файл не знайдено."
+            echo "❌ ПОМИЛКА: Ядро не зібралось!"
             exit 1
           fi
           
