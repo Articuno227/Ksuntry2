@@ -37,9 +37,7 @@ jobs:
           grep -q "CONFIG_KPM=y" "$D" || echo "CONFIG_KPM=y" >> "$D"
           grep -q "CONFIG_KALLSYMS=y" "$D" || echo "CONFIG_KALLSYMS=y" >> "$D"
           grep -q "CONFIG_KALLSYMS_ALL=y" "$D" || echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
-          tail -20 "$D"
 
-      # Розумне кешування компілятора для блискавичних повторних білдів
       - name: Reset and Optimize Cache
         uses: actions/cache@v4
         with:
@@ -51,12 +49,18 @@ jobs:
       - name: Build
         run: |
           cd kernel_source
+          
+          # Очищення та генерація чистого дефконфігу
           make O=out ARCH=arm64 cust_defconfig
 
-          # 1. Перевірений асемблерний фікс
-          sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S
+          # 1. Виправляємо асемблерну помилку ValidContext прямо у вихідному коді файлу entry.S
+          # Це найнадійніший спосіб, який не потребує передачі небезпечних макросів через змінні КCFLAGS/CC
+          if [ -f arch/arm64/kernel/entry.S ]; then
+            sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S
+            echo "✓ Файл entry.S успішно пропатчено вручну."
+          fi
 
-          # 2. Форсуємо збірку susfs.o безпосередньо через Makefile файлової системи
+          # 2. Форсуємо лінкування SUSFS
           if [ -f fs/Makefile ]; then
             echo "" >> fs/Makefile
             echo "obj-y += susfs.o" >> fs/Makefile
@@ -66,10 +70,10 @@ jobs:
           # Скидання статистики кешу перед початком
           ccache -z
 
-          # 3. Запуск компіляції. Інтегруємо ccache у виклик Clang
-          # Повністю видалено проблемний макрос із дужками з KCFLAGS
+          # 3. Запуск компіляції ядра
+          # Передаємо CC чисто, ccache підставляється першим аргументом. Ніяких ":=" або дужок.
           make -j$(nproc --all) O=out ARCH=arm64 \
-            CC="ccache clang-14 -DValidContext= -DValidContext:= -DBIO_MAX_PAGES=256 -Wno-implicit-function-declaration -Wno-error" \
+            CC="ccache clang-14" \
             LD=ld.lld-14 \
             AR=llvm-ar-14 \
             NM=llvm-nm-14 \
@@ -81,13 +85,14 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
             LLVM=1 \
             LLVM_IAS=0 \
-            KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-error" \
+            KCFLAGS="-Dcompat_uptr_t=__u32 -DBIO_MAX_PAGES=256 -Wno-implicit-function-declaration -Wno-error" \
             AFLAGS="-Wa,-W" \
             Image dtbs 2>&1 | tee ../build.log || true
             
-          # Виведемо статус кешування в лог комміту
+          # Звіт ccache
           ccache -s
           
+          echo "=== Перевірка помилок ==="
           grep -i "error:" ../build.log | head -30 || true
           
           echo "=== Перевірка вихідних файлів ==="
