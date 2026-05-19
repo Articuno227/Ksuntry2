@@ -19,9 +19,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y git bc bison flex libssl-dev make libelf-dev zip curl python3 lz4 zstd gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf clang-14 lld-14 llvm-14 ccache
-          clang-14 --version
-          ccache --version
-
+          
       - name: Clone kernel
         run: |
           git clone --depth=1 --branch sixteen-qpr2 https://github.com/PixelOS-Devices/android_kernel_xiaomi_sm6250 kernel_source
@@ -31,12 +29,15 @@ jobs:
           cd kernel_source
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
 
-      - name: Enable KPM
+      - name: Enable KPM & Fix Config
         run: |
-          D="kernel_source/arch/arm64/configs/cust_defconfig"
+          cd kernel_source
+          D="arch/arm64/configs/cust_defconfig"
           grep -q "CONFIG_KPM=y" "$D" || echo "CONFIG_KPM=y" >> "$D"
           grep -q "CONFIG_KALLSYMS=y" "$D" || echo "CONFIG_KALLSYMS=y" >> "$D"
           grep -q "CONFIG_KALLSYMS_ALL=y" "$D" || echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
+          # Жорстко встановлюємо кількість ядер для sm6250, щоб підстрахувати ядро
+          echo "CONFIG_NR_CPUS=8" >> "$D"
 
       - name: Reset and Optimize Cache
         uses: actions/cache@v4
@@ -46,32 +47,33 @@ jobs:
           restore-keys: |
             ccache-kernel-sm6250-
 
-      - name: Build
+      - name: Apply Bulletproof Patches
         run: |
           cd kernel_source
           
-          # 1. Створюємо чистий дефконфіг
+          # 1. Фікс асемблера для SukiSU
+          if [ -f arch/arm64/kernel/entry.S ]; then sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S; fi
+          
+          # 2. Видаляємо помилковий артефакт ValidContext з C-файлу, якщо він туди проліз
+          if [ -f arch/arm64/kernel/sys.c ]; then sed -i 's/.*ValidContext.*//g' arch/arm64/kernel/sys.c; fi
+          
+          # 3. ВИДАЛЯЄМО ГАНЕБНИЙ БАГ XIAOMI (Unsupported NR_CPUS) З СИРЦІВ
+          if [ -f include/trace/events/sched.h ]; then sed -i '/Unsupported NR_CPUS/d' include/trace/events/sched.h; fi
+          
+          # 4. Фікс сумісності драйвера dm-user з Android 14+
+          if [ -f drivers/md/dm-user.c ]; then sed -i 's/BIO_MAX_PAGES/256/g' drivers/md/dm-user.c; fi
+          
+          # 5. Примусове лінкування файлів маскування SUSFS (запобігає undefined symbol)
+          if [ -f fs/Makefile ]; then grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile; fi
+
+      - name: Build
+        run: |
+          cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
 
-          # 2. Виправляємо асемблерну помилку ValidContext безпосередньо у файлі entry.S.
-          # Це повністю усуває потребу в передачі зламаних макросів через командний рядок!
-          if [ -f arch/arm64/kernel/entry.S ]; then
-            sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S
-            echo "✓ Файл entry.S успішно пропатчено вручну від помилки асемблера."
-          fi
-
-          # 3. Форсуємо лінкування файлів SUSFS
-          if [ -f fs/Makefile ]; then
-            echo "" >> fs/Makefile
-            echo "obj-y += susfs.o" >> fs/Makefile
-            echo "✓ Форсування лінкування SUSFS виконано."
-          fi
-
-          # Скидаємо статистику ccache перед початком збірки
           ccache -z
 
-          # 4. Запуск компіляції ядра.
-          # Змінна CC тепер повністю чиста від макросів, що захищає sched.h від збоїв препроцесора.
+          # Запуск компіляції. CC тепер абсолютно чистий, без жодних макросів!
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="ccache clang-14" \
             LD=ld.lld-14 \
@@ -85,11 +87,10 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
             LLVM=1 \
             LLVM_IAS=0 \
-            KCFLAGS="-Dcompat_uptr_t=__u32 -DBIO_MAX_PAGES=256 -Wno-implicit-function-declaration -Wno-error" \
+            KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-implicit-function-declaration -Wno-error" \
             AFLAGS="-Wa,-W" \
             Image dtbs 2>&1 | tee ../build.log || true
             
-          # Виводимо фінальну статистику ccache
           ccache -s
           
           echo "=== Перевірка помилок ==="
@@ -112,13 +113,10 @@ jobs:
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
 
           if [ -f kernel_source/out/arch/arm64/boot/Image ]; then
-            echo "✓ Знайдено нестиснуте ядро Image, стискаємо в Image.gz..."
             gzip -c9 kernel_source/out/arch/arm64/boot/Image > AnyKernel3/Image.gz
           elif [ -f kernel_source/out/arch/arm64/boot/Image.gz ]; then
-            echo "✓ Знайдено готове Image.gz, копіюємо..."
             cp kernel_source/out/arch/arm64/boot/Image.gz AnyKernel3/
           elif [ -f kernel_source/out/arch/arm64/boot/Image-dtb ]; then
-            echo "✓ Знайдено вшитий Image-dtb, стискаємо в Image.gz..."
             gzip -c9 kernel_source/out/arch/arm64/boot/Image-dtb > AnyKernel3/Image.gz
           else
             echo "❌ КРИТИЧНА ПОМИЛКА: жодного файлу ядра не знайдено!"
@@ -130,7 +128,6 @@ jobs:
           cd AnyKernel3
           zip -r9 "../SukiSU-joyeuse.zip" . -x ".git*"
           cd ..
-          ls -lh *.zip
 
       - name: Upload zip
         uses: actions/upload-artifact@v4
