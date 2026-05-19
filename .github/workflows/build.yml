@@ -24,6 +24,13 @@ jobs:
         run: |
           git clone --depth=1 --branch sixteen-qpr2 https://github.com/PixelOS-Devices/android_kernel_xiaomi_sm6250 kernel_source
 
+      - name: Patch power_supply.h
+        run: |
+          cd kernel_source
+          # Додаємо u8 arrayval[16] в структуру power_supply_propval
+          # Ми шукаємо рядок 'int intval;' і після нього вставляємо 'u8 arrayval[16];'
+          sed -i '/int intval;/a \    u8 arrayval[16];' include/linux/power_supply.h
+          
       - name: Integrate SukiSU
         run: |
           cd kernel_source
