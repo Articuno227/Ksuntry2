@@ -41,20 +41,25 @@ jobs:
           cd kernel_source
           D="arch/arm64/configs/cust_defconfig"
           
-          # Базові налаштування
+          # Опції для SukiSU / susfs
           echo "CONFIG_KPM=y" >> "$D"
           echo "CONFIG_KALLSYMS=y" >> "$D"
           echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
-          echo "CONFIG_NR_CPUS=8" >> "$D"
           
-          # ФІКС: Активуємо BPF, щоб прибрати помилку 'bpf_stats_handler'
+          # Опції RCU (виправляють помилки в rcu/tasks.h)
+          echo "CONFIG_TASKS_RCU=y" >> "$D"
+          echo "CONFIG_TASKS_TRACE_RCU=y" >> "$D"
+          echo "CONFIG_TASKS_RUDE_RCU=y" >> "$D"
+          echo "CONFIG_RCU_STALL_COMMON=y" >> "$D"
+          
+          # Опції для Power Supply (виправляють помилки в power_supply_sysfs.c)
+          echo "CONFIG_POWER_SUPPLY=y" >> "$D"
+          echo "CONFIG_POWER_SUPPLY_DEBUG=y" >> "$D"
+          
+          # BPF для сумісності
           echo "CONFIG_BPF=y" >> "$D"
           echo "CONFIG_BPF_SYSCALL=y" >> "$D"
           echo "CONFIG_NET=y" >> "$D"
-          
-          # Переконуємось, що немає конфліктів
-          sed -i '/CONFIG_BPF_JIT/d' "$D"
-          echo "CONFIG_BPF_JIT=y" >> "$D"
           
       - name: Reset and Optimize Cache
         uses: actions/cache@v4
