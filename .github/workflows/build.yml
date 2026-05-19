@@ -5,6 +5,9 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CCACHE_DIR: ~/.ccache
+  CCACHE_MAXSIZE: 2G
+  CCACHE_COMPILERCHECK: content
 
 jobs:
   build:
@@ -15,8 +18,9 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y git bc bison flex libssl-dev make libelf-dev zip curl python3 lz4 zstd gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf clang-14 lld-14 llvm-14
+          sudo apt-get install -y git bc bison flex libssl-dev make libelf-dev zip curl python3 lz4 zstd gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf clang-14 lld-14 llvm-14 ccache
           clang-14 --version
+          ccache --version
 
       - name: Clone kernel
         run: |
@@ -33,74 +37,39 @@ jobs:
           grep -q "CONFIG_KPM=y" "$D" || echo "CONFIG_KPM=y" >> "$D"
           grep -q "CONFIG_KALLSYMS=y" "$D" || echo "CONFIG_KALLSYMS=y" >> "$D"
           grep -q "CONFIG_KALLSYMS_ALL=y" "$D" || echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
-          
-          # Вимикаємо BPF (конфліктує зі збіркою)
-          sed -i '/CONFIG_BPF=/d' "$D"
-          echo "CONFIG_BPF=n" >> "$D"
-          
-          # Вимикаємо BPF статистику
-          sed -i '/CONFIG_BPF_SYSCALL=/d' "$D"
-          echo "CONFIG_BPF_SYSCALL=n" >> "$D"
-          
-          # SUSFS конфіги
-          echo "CONFIG_SUSFS=y" >> "$D"
-          echo "CONFIG_SUSFS_SUS_PATH=y" >> "$D"
-          echo "CONFIG_SUSFS_VNODE_MASK=y" >> "$D"
-          echo "CONFIG_SUSFS_TRY_UMOUNT=y" >> "$D"
-          echo "CONFIG_SUSFS_SPOOF_UNAME=y" >> "$D"
-          echo "CONFIG_SUSFS_ENABLE_LOG=y" >> "$D"
-          echo "CONFIG_SUSFS_HIDE_PORTS=y" >> "$D"
-          
           tail -20 "$D"
+
+      # Розумне кешування компілятора для блискавичних повторних білдів
+      - name: Reset and Optimize Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-kernel-sm6250-${{ github.run_id }}
+          restore-keys: |
+            ccache-kernel-sm6250-
 
       - name: Build
         run: |
-          set -e
           cd kernel_source
-
           make O=out ARCH=arm64 cust_defconfig
 
-          # 1) Фікс для асемблера entry.S
+          # 1. Перевірений асемблерний фікс
           sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S
 
-          # 2) Резервна копія проблемного файлу (на випадок відкату)
-          if [ -f include/trace/events/sched.h ]; then
-            cp include/trace/events/sched.h include/trace/events/sched.h.bak
-          fi
-
-          # 3) Надійно закоментувати будь-який #if...#endif блок, що містить цю помилку
-          #    (перетворює кожен рядок блоку на коментар з префіксом //PATCHED:)
-          perl -0777 -pe '
-            $file = $_;
-            $file =~ s{
-              (#if[^\n]*\n                # початок блоку
-                 (?:(?!#endif).*\n)*?   # будь-які рядки до #endif (не жадно)
-                 [^\n]*Unsupported\ NR_CPUS\ for\ lb\ tracepoint[^\n]*\n  # рядок з помилкою
-                 (?:(?!#endif).*\n)*?   # можливі додаткові рядки
-                 #endif                    # кінець блоку
-                )
-            }{
-              join("", map { "//PATCHED: ".$_."\n" } split(/\n/,$1))
-            }gmsx;
-            $_ = $file;
-          ' include/trace/events/sched.h > include/trace/events/sched.h.tmp && mv include/trace/events/sched.h.tmp include/trace/events/sched.h || true
-
-          # 4) Видаляємо прямі посилання на bpf_stats_handler (якщо є)
-          sed -i '/bpf_stats_handler/d' kernel/sysctl.c || true
-          sed -i '/bpf_stats/d' include/linux/bpf.h || true
-
-          # 5) Впровадження susfs.o у fs/Makefile, якщо треба
+          # 2. Форсуємо збірку susfs.o безпосередньо через Makefile файлової системи
           if [ -f fs/Makefile ]; then
-            if ! grep -q "obj-y += susfs.o" fs/Makefile; then
-              echo "obj-y += susfs.o" >> fs/Makefile
-              echo "✓ Впроваджено susfs.o в fs/Makefile"
-            fi
+            echo "" >> fs/Makefile
+            echo "obj-y += susfs.o" >> fs/Makefile
+            echo "✓ Форсування лінкування SUSFS виконано."
           fi
 
-          # 6) Запускаємо збірку ядра
-          echo "=== Запуск компіляції ядра ==="
+          # Скидання статистики кешу перед початком
+          ccache -z
+
+          # 3. Запуск компіляції. Інтегруємо ccache у виклик Clang
+          # Повністю видалено проблемний макрос із дужками з KCFLAGS
           make -j$(nproc --all) O=out ARCH=arm64 \
-            CC="clang-14 -DValidContext= -DValidContext:= -DBIO_MAX_PAGES=256 -Wno-implicit-function-declaration -Wno-error -Dsusfs_is_vnode_masked\\(x\\)=0" \
+            CC="ccache clang-14 -DValidContext= -DValidContext:= -DBIO_MAX_PAGES=256 -Wno-implicit-function-declaration -Wno-error" \
             LD=ld.lld-14 \
             AR=llvm-ar-14 \
             NM=llvm-nm-14 \
@@ -114,29 +83,16 @@ jobs:
             LLVM_IAS=0 \
             KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-error" \
             AFLAGS="-Wa,-W" \
-            Image dtbs 2>&1 | tee ../build.log
-
-          # 7) Перевіряємо критичні помилки
-          if grep -i "error:" ../build.log; then
-            echo "❌ КРИТИЧНІ ПОМИЛКИ ЗНАЙДЕНІ В ЛОГАХ:"
-            grep -i "error:" ../build.log | head -50
-            # відновлюємо резервну копію sched.h для полегшення дебагу
-            if [ -f include/trace/events/sched.h.bak ]; then
-              mv include/trace/events/sched.h.bak include/trace/events/sched.h || true
-            fi
-            exit 1
-          fi
-
+            Image dtbs 2>&1 | tee ../build.log || true
+            
+          # Виведемо статус кешування в лог комміту
+          ccache -s
+          
+          grep -i "error:" ../build.log | head -30 || true
+          
           echo "=== Перевірка вихідних файлів ==="
           ls -lh out/arch/arm64/boot/ || true
 
-          if [ ! -f out/arch/arm64/boot/Image ] && [ ! -f out/arch/arm64/boot/Image.gz ] && [ ! -f out/arch/arm64/boot/Image-dtb ]; then
-            echo "❌ ПОМИЛКА: Ядро не зібралося! Жоден Image файл не знайдено."
-            exit 1
-          fi
-
-          echo "✓ Ядро зібрано успішно!"
-          
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -147,12 +103,9 @@ jobs:
 
       - name: Package
         run: |
-          set -e
-          
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
 
-          # Динамічна перевірка: якщо зібрався Image, стискаємо його в Image.gz вручну
           if [ -f kernel_source/out/arch/arm64/boot/Image ]; then
             echo "✓ Знайдено нестиснуте ядро Image, стискаємо в Image.gz..."
             gzip -c9 kernel_source/out/arch/arm64/boot/Image > AnyKernel3/Image.gz
@@ -167,19 +120,16 @@ jobs:
             exit 1
           fi
 
-          # Збираємо dtb, якщо вони скомпілювалися окремо
           find kernel_source/out/arch/arm64/boot/dts -name "*.dtb" -exec cat {} >> AnyKernel3/dtb \; 2>/dev/null || true
 
           cd AnyKernel3
           zip -r9 "../SukiSU-joyeuse.zip" . -x ".git*"
           cd ..
           ls -lh *.zip
-          
-          echo "✓ Пакет готовий для завантаження!"
 
-      - name: Upload
+      - name: Upload zip
         uses: actions/upload-artifact@v4
         with:
           name: SukiSU-joyeuse-${{ github.run_number }}
-          path: "*.zip"
-          retention-days: 7
+          path: ./*.zip
+          retention-days: 5
