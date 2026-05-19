@@ -27,29 +27,30 @@ jobs:
           cd kernel_source
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
 
-      - name: Enable KPM & SUSFS Config
+      - name: Enable KPM
         run: |
           D="kernel_source/arch/arm64/configs/cust_defconfig"
-          
-          # Основні конфіги
           grep -q "CONFIG_KPM=y" "$D" || echo "CONFIG_KPM=y" >> "$D"
           grep -q "CONFIG_KALLSYMS=y" "$D" || echo "CONFIG_KALLSYMS=y" >> "$D"
           grep -q "CONFIG_KALLSYMS_ALL=y" "$D" || echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
           
-          # Вимикаємо SCHEDSTATS (несумісний tracepoint)
-          sed -i '/CONFIG_SCHEDSTATS=/d' "$D"
-          echo "CONFIG_SCHEDSTATS=n" >> "$D"
+          # Вимикаємо BPF (конфліктує зі збіркою)
+          sed -i '/CONFIG_BPF=/d' "$D"
+          echo "CONFIG_BPF=n" >> "$D"
+          
+          # Вимикаємо BPF статистику
+          sed -i '/CONFIG_BPF_SYSCALL=/d' "$D"
+          echo "CONFIG_BPF_SYSCALL=n" >> "$D"
           
           # SUSFS конфіги
-          grep -q "CONFIG_SUSFS=y" "$D" || echo "CONFIG_SUSFS=y" >> "$D"
-          grep -q "CONFIG_SUSFS_SUS_PATH=y" "$D" || echo "CONFIG_SUSFS_SUS_PATH=y" >> "$D"
-          grep -q "CONFIG_SUSFS_VNODE_MASK=y" "$D" || echo "CONFIG_SUSFS_VNODE_MASK=y" >> "$D"
-          grep -q "CONFIG_SUSFS_TRY_UMOUNT=y" "$D" || echo "CONFIG_SUSFS_TRY_UMOUNT=y" >> "$D"
-          grep -q "CONFIG_SUSFS_SPOOF_UNAME=y" "$D" || echo "CONFIG_SUSFS_SPOOF_UNAME=y" >> "$D"
-          grep -q "CONFIG_SUSFS_ENABLE_LOG=y" "$D" || echo "CONFIG_SUSFS_ENABLE_LOG=y" >> "$D"
-          grep -q "CONFIG_SUSFS_HIDE_PORTS=y" "$D" || echo "CONFIG_SUSFS_HIDE_PORTS=y" >> "$D"
+          echo "CONFIG_SUSFS=y" >> "$D"
+          echo "CONFIG_SUSFS_SUS_PATH=y" >> "$D"
+          echo "CONFIG_SUSFS_VNODE_MASK=y" >> "$D"
+          echo "CONFIG_SUSFS_TRY_UMOUNT=y" >> "$D"
+          echo "CONFIG_SUSFS_SPOOF_UNAME=y" >> "$D"
+          echo "CONFIG_SUSFS_ENABLE_LOG=y" >> "$D"
+          echo "CONFIG_SUSFS_HIDE_PORTS=y" >> "$D"
           
-          echo "=== Конфіг готовий ==="
           tail -20 "$D"
 
       - name: Build
