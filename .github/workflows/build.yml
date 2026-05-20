@@ -36,30 +36,36 @@ jobs:
           cd kernel_source
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
 
-      - name: Enable KPM & Fix Config
+      - name: Enable KPM
         run: |
-          cd kernel_source
-          D="arch/arm64/configs/cust_defconfig"
+          D="kernel_source/arch/arm64/configs/cust_defconfig"
+          grep -q "CONFIG_KPM=y" "$D" || echo "CONFIG_KPM=y" >> "$D"
+          grep -q "CONFIG_KALLSYMS=y" "$D" || echo "CONFIG_KALLSYMS=y" >> "$D"
+          grep -q "CONFIG_KALLSYMS_ALL=y" "$D" || echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
           
-          # Опції для SukiSU / susfs
-          echo "CONFIG_KPM=y" >> "$D"
-          echo "CONFIG_KALLSYMS=y" >> "$D"
-          echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
+          # Вмикаємо BPF (ОБОВ'ЯЗКОВО ДЛЯ ANDROID 16, інакше не працюватиме мережа/Wi-Fi)
+          sed -i '/CONFIG_BPF=/d' "$D"
+          echo "CONFIG_BPF=y" >> "$D"
           
-          # Опції RCU (виправляють помилки в rcu/tasks.h)
+          # Вмикаємо BPF системні виклики
+          sed -i '/CONFIG_BPF_SYSCALL=/d' "$D"
+          echo "CONFIG_BPF_SYSCALL=y" >> "$D"
+          
+          # Примусово вмикаємо RCU підсистеми (виправляє помилки в kernel/rcu/tasks.h)
           echo "CONFIG_TASKS_RCU=y" >> "$D"
           echo "CONFIG_TASKS_TRACE_RCU=y" >> "$D"
           echo "CONFIG_TASKS_RUDE_RCU=y" >> "$D"
-          echo "CONFIG_RCU_STALL_COMMON=y" >> "$D"
           
-          # Опції для Power Supply (виправляють помилки в power_supply_sysfs.c)
-          echo "CONFIG_POWER_SUPPLY=y" >> "$D"
-          echo "CONFIG_POWER_SUPPLY_DEBUG=y" >> "$D"
+          # SUSFS конфіги
+          echo "CONFIG_SUSFS=y" >> "$D"
+          echo "CONFIG_SUSFS_SUS_PATH=y" >> "$D"
+          echo "CONFIG_SUSFS_VNODE_MASK=y" >> "$D"
+          echo "CONFIG_SUSFS_TRY_UMOUNT=y" >> "$D"
+          echo "CONFIG_SUSFS_SPOOF_UNAME=y" >> "$D"
+          echo "CONFIG_SUSFS_ENABLE_LOG=y" >> "$D"
+          echo "CONFIG_SUSFS_HIDE_PORTS=y" >> "$D"
           
-          # BPF для сумісності
-          echo "CONFIG_BPF=y" >> "$D"
-          echo "CONFIG_BPF_SYSCALL=y" >> "$D"
-          echo "CONFIG_NET=y" >> "$D"
+          tail -20 "$D"
 
       - name: Fix Kernel Config and Headers
         run: |
@@ -110,7 +116,19 @@ jobs:
           make O=out ARCH=arm64 cust_defconfig
 
           ccache -z
+          
+          # 4.5) Фікс для Power Supply (застарілі заголовки та збереження швидкої зарядки 33W)
+          FILE_PS="drivers/power/supply/power_supply_sysfs.c"
+          if [ -f "$FILE_PS" ]; then
+            sed -i '1i #define POWER_SUPPLY_PROP_ROMID 100\n#define POWER_SUPPLY_PROP_DS_STATUS 101\n#define POWER_SUPPLY_PROP_PAGE0_DATA 102\n#define POWER_SUPPLY_PROP_PAGE1_DATA 103\n#define POWER_SUPPLY_PROP_PAGEDATA 104\n#define POWER_SUPPLY_PROP_VERIFY_MODEL_NAME 105' "$FILE_PS"
+            echo "✓ Додано дефайни констант у power_supply_sysfs.c"
+          fi
 
+          if [ -f include/linux/power_supply.h ]; then
+            sed -i '/int intval;/a \    u8 arrayval[16];' include/linux/power_supply.h
+            echo "✓ Додано підтримку arrayval у power_supply.h"
+          fi
+          
           # Запуск компіляції. CC тепер абсолютно чистий, без жодних макросів!
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="ccache clang-14" \
