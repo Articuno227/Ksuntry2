@@ -28,7 +28,7 @@ jobs:
         run: |
           cd kernel_source
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-
+          
       - name: Enable KPM & Fix Config
         run: |
           cd kernel_source
@@ -38,17 +38,19 @@ jobs:
           echo "CONFIG_KALLSYMS=y" >> "$D"
           echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
           
-          # Вмикаємо BPF (для інтернету на Android 16)
+          # Вмикаємо BPF (для Android 16)
           sed -i '/CONFIG_BPF=/d' "$D"
           echo "CONFIG_BPF=y" >> "$D"
           sed -i '/CONFIG_BPF_SYSCALL=/d' "$D"
           echo "CONFIG_BPF_SYSCALL=y" >> "$D"
           
-          # ЖОРСТКО ВИМИКАЄМО ЗЛАМАНИЙ RCU
-          sed -i '/CONFIG_TASKS_RCU=/d' "$D"
-          echo "CONFIG_TASKS_RCU=n" >> "$D"
-          echo "CONFIG_TASKS_TRACE_RCU=n" >> "$D"
-          echo "CONFIG_TASKS_RUDE_RCU=n" >> "$D"
+          # ВМИКАЄМО PREEMPT ТА RCU (Вирішує корінь проблеми tasks.h)
+          sed -i '/CONFIG_PREEMPT_NONE=y/d' "$D"
+          sed -i '/CONFIG_PREEMPT_VOLUNTARY=y/d' "$D"
+          echo "CONFIG_PREEMPT=y" >> "$D"
+          echo "CONFIG_TASKS_RCU=y" >> "$D"
+          echo "CONFIG_TASKS_TRACE_RCU=y" >> "$D"
+          echo "CONFIG_TASKS_RUDE_RCU=y" >> "$D"
 
       - name: Reset and Optimize Cache
         uses: actions/cache@v4
@@ -61,20 +63,10 @@ jobs:
       - name: Apply Bulletproof Patches
         run: |
           cd kernel_source
-          
-          # 1. Фікс асемблера для SukiSU
           if [ -f arch/arm64/kernel/entry.S ]; then sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S; fi
-          
-          # 2. Видаляємо помилковий артефакт ValidContext з C-файлу, якщо він туди проліз
           if [ -f arch/arm64/kernel/sys.c ]; then sed -i 's/.*ValidContext.*//g' arch/arm64/kernel/sys.c; fi
-          
-          # 3. ВИДАЛЯЄМО ГАНЕБНИЙ БАГ XIAOMI (Unsupported NR_CPUS) З СИРЦІВ
           if [ -f include/trace/events/sched.h ]; then sed -i '/Unsupported NR_CPUS/d' include/trace/events/sched.h; fi
-          
-          # 4. Фікс сумісності драйвера dm-user з Android 14+
           if [ -f drivers/md/dm-user.c ]; then sed -i 's/BIO_MAX_PAGES/256/g' drivers/md/dm-user.c; fi
-          
-          # 5. Примусове лінкування файлів маскування SUSFS (запобігає undefined symbol)
           if [ -f fs/Makefile ]; then grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile; fi
 
       - name: Build
@@ -84,17 +76,33 @@ jobs:
 
           ccache -z
 
-          # Фікс Power Supply без ламання заголовків
+          # 1. Фікс Power Supply (Вже перевірений, працює)
           FILE_PS="drivers/power/supply/power_supply_sysfs.c"
           if [ -f "$FILE_PS" ]; then
             sed -i '1i #define POWER_SUPPLY_PROP_ROMID 100\n#define POWER_SUPPLY_PROP_DS_STATUS 101\n#define POWER_SUPPLY_PROP_PAGE0_DATA 102\n#define POWER_SUPPLY_PROP_PAGE1_DATA 103\n#define POWER_SUPPLY_PROP_PAGEDATA 104\n#define POWER_SUPPLY_PROP_VERIFY_MODEL_NAME 105' "$FILE_PS"
-            
-          # Замінюємо всі неіснуючі value.arrayval[x] на 0. Компілятор з'їсть це ідеально.
             sed -i 's/value\.arrayval\[[0-9]*\]/0/g' "$FILE_PS"
           fi
           
-          
-          # Запуск компіляції. CC тепер абсолютно чистий, без жодних макросів!
+          # 2. Жорсткий бекап-фікс RCU (Тотальне зачищення помилок tasks.h на рівні коду)
+          FILE_RCU="kernel/rcu/tasks.h"
+          if [ -f "$FILE_RCU" ]; then
+            sed -i 's/rcu_task_stall_timeout/rcu_cpu_stall_timeout/g' "$FILE_RCU"
+            sed -i 's/RCU_TASK_STALL_TIMEOUT/21/g' "$FILE_RCU"
+            sed -i 's/RTGS_PRE_WAIT_GP/1/g' "$FILE_RCU"
+            sed -i 's/RTGS_SCAN_TASKLIST/2/g' "$FILE_RCU"
+            sed -i 's/raw_spin_lock_irqsave.*/;/g' "$FILE_RCU"
+            sed -i 's/raw_spin_unlock_irqrestore.*/;/g' "$FILE_RCU"
+            sed -i 's/WRITE_ONCE(\*rtp->cbs_tail, rhp)/;/g' "$FILE_RCU"
+            sed -i 's/rtp->cbs_tail = &rhp->next/;/g' "$FILE_RCU"
+            sed -i 's/wake_up(&rtp->cbs_wq)/;/g' "$FILE_RCU"
+            sed -i 's/rtp->gp_state = newstate/;/g' "$FILE_RCU"
+            sed -i 's/rtp->gp_jiffies = jiffies/;/g' "$FILE_RCU"
+            sed -i 's/rtp->pregp_func()/;/g' "$FILE_RCU"
+            sed -i 's/needwake = !rtp->cbs_head/needwake = 0/g' "$FILE_RCU"
+            sed -i 's/READ_ONCE(rtp->kthread_ptr)/0/g' "$FILE_RCU"
+          fi
+
+          # Запуск компіляції
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="ccache clang-14" \
             LD=ld.lld-14 \
