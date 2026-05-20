@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   CCACHE_DIR: /github/home/.ccache
   CCACHE_MAXSIZE: 5G
   CCACHE_COMPILERCHECK: content
@@ -24,24 +25,24 @@ jobs:
         run: |
           git clone --depth=1 --branch sixteen-qpr2 https://github.com/PixelOS-Devices/android_kernel_xiaomi_sm6250 kernel_source
 
+      - name: Patch power_supply.h
+        run: |
+          cd kernel_source
+          sed -i '/int intval;/a \    u8 arrayval[16];' include/linux/power_supply.h
+
       - name: Integrate SukiSU
         run: |
           cd kernel_source
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
 
-      - name: Patch & Fix Config
+      - name: Enable KPM & Fix Config
         run: |
           cd kernel_source
-          # 1. Power Supply Fix
-          sed -i '/int intval;/a \    u8 arrayval[16];' include/linux/power_supply.h
-          
-          # 2. RCU Fix
+          # Видалення конфліктних макросів перед збіркою
           if [ -f kernel/rcu/tasks.h ]; then
             sed -i '/rcu_cpu_stall_timeout/d' kernel/rcu/tasks.h
-            sed -i '/RCU_TASK_STALL_TIMEOUT/d' kernel/rcu/tasks.h
           fi
-
-          # 3. Config Setup
+          
           D="arch/arm64/configs/cust_defconfig"
           echo "CONFIG_KPM=y" >> "$D"
           echo "CONFIG_KALLSYMS=y" >> "$D"
@@ -82,97 +83,7 @@ jobs:
             Image dtbs 2>&1 | tee ../build.log || true
           
           echo "=== Перевірка помилок ==="
-          grep -i "error:" ../build.log | head -30 || true
-          
-          ccache -s
-
-      - name: Package
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
-          
-          if [ -f kernel_source/out/arch/arm64/boot/Image ]; then
-            gzip -c9 kernel_source/out/arch/arm64/boot/Image > AnyKernel3/Image.gz
-          elif [ -f kernel_source/out/arch/arm64/boot/Image.gz ]; then
-            cp kernel_source/out/arch/arm64/boot/Image.gz AnyKernel3/
-          elif [ -f kernel_source/out/arch/arm64/boot/Image-dtb ]; then
-            gzip -c9 kernel_source/out/arch/arm64/boot/Image-dtb > AnyKernel3/Image.gz
-          else
-            echo "❌ КРИТИЧНА ПОМИЛКА: Image не знайдено!"
-            exit 1
-          fi
-
-      - name: Upload Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Kernel-Package
-          path: |
-            AnyKernel3/*
-            build.log
-          retention-days: 3
-          cd kernel_source
-          if [ -f arch/arm64/kernel/entry.S ]; then sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S; fi
-          if [ -f arch/arm64/kernel/sys.c ]; then sed -i 's/.*ValidContext.*//g' arch/arm64/kernel/sys.c; fi
-          if [ -f include/trace/events/sched.h ]; then sed -i '/Unsupported NR_CPUS/d' include/trace/events/sched.h; fi
-          if [ -f drivers/md/dm-user.c ]; then sed -i 's/BIO_MAX_PAGES/256/g' drivers/md/dm-user.c; fi
-          if [ -f fs/Makefile ]; then grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile; fi
-
-      - name: Build
-        run: |
-          cd kernel_source
-          make O=out ARCH=arm64 cust_defconfig
-
-          ccache -z
-
-          # 1. Фікс Power Supply (Вже перевірений, працює)
-          FILE_PS="drivers/power/supply/power_supply_sysfs.c"
-          if [ -f "$FILE_PS" ]; then
-            sed -i '1i #define POWER_SUPPLY_PROP_ROMID 100\n#define POWER_SUPPLY_PROP_DS_STATUS 101\n#define POWER_SUPPLY_PROP_PAGE0_DATA 102\n#define POWER_SUPPLY_PROP_PAGE1_DATA 103\n#define POWER_SUPPLY_PROP_PAGEDATA 104\n#define POWER_SUPPLY_PROP_VERIFY_MODEL_NAME 105' "$FILE_PS"
-            sed -i 's/value\.arrayval\[[0-9]*\]/0/g' "$FILE_PS"
-          fi
-          
-          # 2. Жорсткий бекап-фікс RCU (Тотальне зачищення помилок tasks.h на рівні коду)
-          FILE_RCU="kernel/rcu/tasks.h"
-          if [ -f "$FILE_RCU" ]; then
-            sed -i 's/rcu_task_stall_timeout/rcu_cpu_stall_timeout/g' "$FILE_RCU"
-            sed -i 's/RCU_TASK_STALL_TIMEOUT/21/g' "$FILE_RCU"
-            sed -i 's/RTGS_PRE_WAIT_GP/1/g' "$FILE_RCU"
-            sed -i 's/RTGS_SCAN_TASKLIST/2/g' "$FILE_RCU"
-            sed -i 's/raw_spin_lock_irqsave.*/;/g' "$FILE_RCU"
-            sed -i 's/raw_spin_unlock_irqrestore.*/;/g' "$FILE_RCU"
-            sed -i 's/WRITE_ONCE(\*rtp->cbs_tail, rhp)/;/g' "$FILE_RCU"
-            sed -i 's/rtp->cbs_tail = &rhp->next/;/g' "$FILE_RCU"
-            sed -i 's/wake_up(&rtp->cbs_wq)/;/g' "$FILE_RCU"
-            sed -i 's/rtp->gp_state = newstate/;/g' "$FILE_RCU"
-            sed -i 's/rtp->gp_jiffies = jiffies/;/g' "$FILE_RCU"
-            sed -i 's/rtp->pregp_func()/;/g' "$FILE_RCU"
-            sed -i 's/needwake = !rtp->cbs_head/needwake = 0/g' "$FILE_RCU"
-            sed -i 's/READ_ONCE(rtp->kthread_ptr)/0/g' "$FILE_RCU"
-          fi
-
-          # Запуск компіляції
-          make -j$(nproc --all) O=out ARCH=arm64 \
-            CC="ccache clang-14" \
-            LD=ld.lld-14 \
-            AR=llvm-ar-14 \
-            NM=llvm-nm-14 \
-            OBJCOPY=llvm-objcopy-14 \
-            OBJDUMP=llvm-objdump-14 \
-            STRIP=llvm-strip-14 \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
-            LLVM=1 \
-            LLVM_IAS=0 \
-            KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-implicit-function-declaration -Wno-error" \
-            AFLAGS="-Wa,-W" \
-            Image dtbs 2>&1 | tee ../build.log || true
-            
-          ccache -s
-          
-          echo "=== Перевірка помилок ==="
-          grep -i "error:" ../build.log | head -30 || true
+          grep -i "error:" ../build.log | head -20 || true
           
           echo "=== Перевірка вихідних файлів ==="
           ls -lh out/arch/arm64/boot/ || true
@@ -190,26 +101,5 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
 
-          if [ -f kernel_source/out/arch/arm64/boot/Image ]; then
-            gzip -c9 kernel_source/out/arch/arm64/boot/Image > AnyKernel3/Image.gz
-          elif [ -f kernel_source/out/arch/arm64/boot/Image.gz ]; then
-            cp kernel_source/out/arch/arm64/boot/Image.gz AnyKernel3/
-          elif [ -f kernel_source/out/arch/arm64/boot/Image-dtb ]; then
-            gzip -c9 kernel_source/out/arch/arm64/boot/Image-dtb > AnyKernel3/Image.gz
-          else
-            echo "❌ КРИТИЧНА ПОМИЛКА: жодного файлу ядра не знайдено!"
-            exit 1
-          fi
-
-          find kernel_source/out/arch/arm64/boot/dts -name "*.dtb" -exec cat {} >> AnyKernel3/dtb \; 2>/dev/null || true
-
-          cd AnyKernel3
-          zip -r9 "../SukiSU-joyeuse.zip" . -x ".git*"
-          cd ..
-
-      - name: Upload zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: SukiSU-joyeuse-${{ github.run_number }}
-          path: ./*.zip
-          retention-days: 5
+          if [ -
+          
