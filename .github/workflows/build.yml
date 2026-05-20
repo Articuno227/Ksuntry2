@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  CCACHE_DIR: ~/.ccache
-  CCACHE_MAXSIZE: 2G
+  CCACHE_DIR: /github/home/.ccache
+  CCACHE_MAXSIZE: 5G
   CCACHE_COMPILERCHECK: content
 
 jobs:
@@ -19,7 +18,8 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y git bc bison flex libssl-dev make libelf-dev zip curl python3 lz4 zstd gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf clang-14 lld-14 llvm-14 ccache
-          
+          ccache -M 5G
+
       - name: Clone kernel
         run: |
           git clone --depth=1 --branch sixteen-qpr2 https://github.com/PixelOS-Devices/android_kernel_xiaomi_sm6250 kernel_source
@@ -28,40 +28,89 @@ jobs:
         run: |
           cd kernel_source
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-          
-      - name: Enable KPM & Fix Config
+
+      - name: Patch & Fix Config
         run: |
           cd kernel_source
-          D="arch/arm64/configs/cust_defconfig"
+          # 1. Power Supply Fix
+          sed -i '/int intval;/a \    u8 arrayval[16];' include/linux/power_supply.h
           
+          # 2. RCU Fix
+          if [ -f kernel/rcu/tasks.h ]; then
+            sed -i '/rcu_cpu_stall_timeout/d' kernel/rcu/tasks.h
+            sed -i '/RCU_TASK_STALL_TIMEOUT/d' kernel/rcu/tasks.h
+          fi
+
+          # 3. Config Setup
+          D="arch/arm64/configs/cust_defconfig"
           echo "CONFIG_KPM=y" >> "$D"
           echo "CONFIG_KALLSYMS=y" >> "$D"
           echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
-          
-          # Вмикаємо BPF (для Android 16)
-          sed -i '/CONFIG_BPF=/d' "$D"
           echo "CONFIG_BPF=y" >> "$D"
-          sed -i '/CONFIG_BPF_SYSCALL=/d' "$D"
           echo "CONFIG_BPF_SYSCALL=y" >> "$D"
-          
-          # ВМИКАЄМО PREEMPT ТА RCU (Вирішує корінь проблеми tasks.h)
-          sed -i '/CONFIG_PREEMPT_NONE=y/d' "$D"
-          sed -i '/CONFIG_PREEMPT_VOLUNTARY=y/d' "$D"
           echo "CONFIG_PREEMPT=y" >> "$D"
           echo "CONFIG_TASKS_RCU=y" >> "$D"
-          echo "CONFIG_TASKS_TRACE_RCU=y" >> "$D"
-          echo "CONFIG_TASKS_RUDE_RCU=y" >> "$D"
 
-      - name: Reset and Optimize Cache
+      - name: Setup Cache
         uses: actions/cache@v4
         with:
-          path: ~/.ccache
+          path: /github/home/.ccache
           key: ccache-kernel-sm6250-${{ github.run_id }}
           restore-keys: |
             ccache-kernel-sm6250-
 
-      - name: Apply Bulletproof Patches
+      - name: Build
         run: |
+          cd kernel_source
+          make O=out ARCH=arm64 cust_defconfig
+          ccache -z
+          
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC="ccache clang-14" \
+            LD=ld.lld-14 \
+            AR=llvm-ar-14 \
+            NM=llvm-nm-14 \
+            OBJCOPY=llvm-objcopy-14 \
+            OBJDUMP=llvm-objdump-14 \
+            STRIP=llvm-strip-14 \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
+            LLVM=1 \
+            LLVM_IAS=0 \
+            KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-implicit-function-declaration -Wno-error" \
+            Image dtbs 2>&1 | tee ../build.log || true
+          
+          echo "=== Перевірка помилок ==="
+          grep -i "error:" ../build.log | head -30 || true
+          
+          ccache -s
+
+      - name: Package
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
+          
+          if [ -f kernel_source/out/arch/arm64/boot/Image ]; then
+            gzip -c9 kernel_source/out/arch/arm64/boot/Image > AnyKernel3/Image.gz
+          elif [ -f kernel_source/out/arch/arm64/boot/Image.gz ]; then
+            cp kernel_source/out/arch/arm64/boot/Image.gz AnyKernel3/
+          elif [ -f kernel_source/out/arch/arm64/boot/Image-dtb ]; then
+            gzip -c9 kernel_source/out/arch/arm64/boot/Image-dtb > AnyKernel3/Image.gz
+          else
+            echo "❌ КРИТИЧНА ПОМИЛКА: Image не знайдено!"
+            exit 1
+          fi
+
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-Package
+          path: |
+            AnyKernel3/*
+            build.log
+          retention-days: 3
           cd kernel_source
           if [ -f arch/arm64/kernel/entry.S ]; then sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S; fi
           if [ -f arch/arm64/kernel/sys.c ]; then sed -i 's/.*ValidContext.*//g' arch/arm64/kernel/sys.c; fi
