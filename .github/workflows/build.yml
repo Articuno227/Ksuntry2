@@ -34,7 +34,7 @@ jobs:
             sed -i '/int intval;/a \    u8 arrayval[16];' include/linux/power_supply.h
           fi
           
-          # 2. Елегантний фікс RCU (генеруємо відсутні структури замість видалення коду)
+          # 2. Елегантний фікс RCU (генеруємо відсутні структури)
           cat << 'EOF' > kernel/rcu/rcu_tasks_fix.h
           #ifndef RCU_TASKS_FIX_H
           #define RCU_TASKS_FIX_H
@@ -67,8 +67,12 @@ jobs:
           EOF
           
           if [ -f kernel/rcu/tasks.h ]; then
-            # Вставляємо наш рятівний заголовок на самий початок файлу
             sed -i '1i #include "rcu_tasks_fix.h"' kernel/rcu/tasks.h
+          fi
+
+          # 3. ВИДАЛЯЄМО БАГ XIAOMI (Unsupported NR_CPUS)
+          if [ -f include/trace/events/sched.h ]; then
+            sed -i '/Unsupported NR_CPUS/d' include/trace/events/sched.h
           fi
 
       - name: Integrate SukiSU
@@ -129,7 +133,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log-${{ github.run_number }}
-          path: kernel_source/build.log
+          path: build.log
           retention-days: 3
 
       - name: Package
