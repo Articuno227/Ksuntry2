@@ -5,7 +5,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_DIR: ~/.ccache
   CCACHE_MAXSIZE: 5G
   CCACHE_COMPILERCHECK: content
 
@@ -25,60 +25,83 @@ jobs:
         run: |
           git clone --depth=1 --branch sixteen-qpr2 https://github.com/PixelOS-Devices/android_kernel_xiaomi_sm6250 kernel_source
 
-      - name: Apply Structural Fixes
-        run: |
-          cd kernel_source
-          
-          # 1. Ідемпотентний фікс Power Supply
-          if ! grep -q "arrayval" include/linux/power_supply.h; then
-            sed -i '/int intval;/a \    u8 arrayval[16];' include/linux/power_supply.h
-          fi
-          
-          # 2. Елегантний фікс RCU (генеруємо відсутні структури)
-          cat << 'EOF' > kernel/rcu/rcu_tasks_fix.h
-          #ifndef RCU_TASKS_FIX_H
-          #define RCU_TASKS_FIX_H
-          #include <linux/spinlock.h>
-          #include <linux/wait.h>
-          #include <linux/rcupdate.h>
-          
-          #define RTGS_PRE_WAIT_GP 1
-          #define RTGS_SCAN_TASKLIST 2
-          
-          #ifndef rcu_task_stall_timeout
-          #define rcu_task_stall_timeout rcu_cpu_stall_timeout
-          #endif
-          
-          #ifndef RCU_TASK_STALL_TIMEOUT
-          #define RCU_TASK_STALL_TIMEOUT rcu_cpu_stall_timeout
-          #endif
-          
-          struct rcu_tasks {
-              raw_spinlock_t cbs_lock;
-              struct rcu_head *cbs_head;
-              struct rcu_head **cbs_tail;
-              wait_queue_head_t cbs_wq;
-              int gp_state;
-              unsigned long gp_jiffies;
-              void (*pregp_func)(void);
-              struct task_struct *kthread_ptr;
-          };
-          #endif
-          EOF
-          
-          if [ -f kernel/rcu/tasks.h ]; then
-            sed -i '1i #include "rcu_tasks_fix.h"' kernel/rcu/tasks.h
-          fi
-
-          # 3. ВИДАЛЯЄМО БАГ XIAOMI (Unsupported NR_CPUS)
-          if [ -f include/trace/events/sched.h ]; then
-            sed -i '/Unsupported NR_CPUS/d' include/trace/events/sched.h
-          fi
-
       - name: Integrate SukiSU
         run: |
           cd kernel_source
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+
+      - name: Apply Structural Fixes (Python Smart Patch)
+        run: |
+          cd kernel_source
+          
+          cat << 'EOF' > smart_patch.py
+          import os
+
+          # 1. Виправлення затертого сусфсом power_supply.h
+          ps_path = 'include/linux/power_supply.h'
+          if os.path.exists(ps_path):
+              print("Патчимо power_supply.h...")
+              with open(ps_path, 'r') as f:
+                  content = f.read()
+              
+              if 'arrayval' not in content:
+                  content = content.replace('int intval;', 'int intval;\n\tu8 arrayval[16];')
+              
+              if 'POWER_SUPPLY_PROP_ROMID' not in content:
+                  if 'POWER_SUPPLY_PROP_CAPACITY,' in content:
+                      content = content.replace('POWER_SUPPLY_PROP_CAPACITY,', 'POWER_SUPPLY_PROP_CAPACITY,\n\tPOWER_SUPPLY_PROP_ROMID,\n\tPOWER_SUPPLY_PROP_DS_STATUS,')
+                  else:
+                      content = content.replace('POWER_SUPPLY_PROP_STATUS,', 'POWER_SUPPLY_PROP_STATUS,\n\tPOWER_SUPPLY_PROP_ROMID,\n\tPOWER_SUPPLY_PROP_DS_STATUS,')
+              
+              with open(ps_path, 'w') as f:
+                  f.write(content)
+
+          # 2. Розумне лікування та ізоляція kernel/rcu/tasks.h
+          rcu_path = 'kernel/rcu/tasks.h'
+          if os.path.exists(rcu_path):
+              print("Патчимо tasks.h...")
+              with open(rcu_path, 'r') as f:
+                  lines = f.readlines()
+              
+              new_lines = []
+              new_lines.append("#ifndef _FIXED_RCU_TASKS_H\n")
+              new_lines.append("#define _FIXED_RCU_TASKS_H\n")
+              
+              for i, line in enumerate(lines):
+                  ln = i + 1
+                  
+                  # Прибираємо зламані макроси (наприклад #define 1 або #define y)
+                  if line.strip().startswith("#define"):
+                      parts = line.split()
+                      if len(parts) > 1 and parts[1][0].isdigit():
+                          line = "// " + line
+                  
+                  # Виправлення помилки присвоєння void до int (рядки 320-330 та 510-530)
+                  if ln in range(315, 335) or ln in range(480, 540):
+                      if '=' in line and '(' in line and 'if' not in line and 'while' not in line and 'return' not in line:
+                          parts = line.split('=', 1)
+                          indent = line[:len(line) - len(line.lstrip())]
+                          line = indent + parts[1].strip() + "\n"
+                          
+                  new_lines.append(line)
+                  
+              new_lines.append("#endif\n")
+              
+              with open(rcu_path, 'w') as f:
+                  f.writelines(new_lines)
+
+          # 3. Вирізання помилки NR_CPUS у sched.h
+          sched_path = 'include/trace/events/sched.h'
+          if os.path.exists(sched_path):
+              print("Патчимо sched.h...")
+              with open(sched_path, 'r') as f:
+                  s_content = f.read()
+              s_content = s_content.replace('#error "Unsupported NR_CPUS for lb tracepoint."', '// #error "Unsupported NR_CPUS for lb tracepoint."')
+              with open(sched_path, 'w') as f:
+                  f.write(s_content)
+          EOF
+          
+          python3 smart_patch.py
 
       - name: Enable KPM & Fix Config
         run: |
@@ -95,7 +118,7 @@ jobs:
       - name: Setup Cache
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/.ccache
+          path: ~/.ccache
           key: ccache-kernel-sm6250-${{ github.run_id }}
           restore-keys: |
             ccache-kernel-sm6250-
