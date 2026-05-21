@@ -86,13 +86,6 @@ jobs:
             sed -i '/#include <linux\/power_supply.h>/a #ifndef POWER_SUPPLY_PROP_ROMID\n#define POWER_SUPPLY_PROP_ROMID 100\n#define POWER_SUPPLY_PROP_DS_STATUS 101\n#define POWER_SUPPLY_PROP_PAGE0_DATA 102\n#define POWER_SUPPLY_PROP_PAGE1_DATA 103\n#define POWER_SUPPLY_PROP_PAGEDATA 104\n#define POWER_SUPPLY_PROP_VERIFY_MODEL_NAME 105\n#endif' "$FILE_PS"
           fi
 
-          # Фікс: RCU (Видаляємо лише конфліктні виклики module_param)
-          FILE_RCU="kernel/rcu/tasks.h"
-          if [ -f "$FILE_RCU" ]; then
-            sed -i '/module_param(rcu_cpu_stall_timeout/d' "$FILE_RCU"
-            sed -i '/module_param(rcu_task_stall_timeout/d' "$FILE_RCU"
-          fi
-
       - name: Build
         run: |
           cd kernel_source
@@ -114,7 +107,7 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
             LLVM=1 \
             LLVM_IAS=0 \
-            KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-implicit-function-declaration -Wno-error" \
+            KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-implicit-function-declaration -Wno-error -DFULL_THROTTLE_BOOST=0 -DNOHZ_BALANCE_KICK=0" \
             AFLAGS="-Wa,-W" \
             Image dtbs 2>&1 | tee ../build.log || true
             
