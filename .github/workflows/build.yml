@@ -66,6 +66,10 @@ jobs:
           # Спробуємо вимкнути EFI_STUB, якщо воно не критично (це часто прибирає помилку __efistub_strrchr)
           sed -i '/CONFIG_EFI_STUB=y/d' "$D"
           echo "CONFIG_EFI_STUB=n" >> "$D"
+          echo "CONFIG_NO_HZ_COMMON=y" >> "$D"
+          echo "CONFIG_NO_HZ_IDLE=y" >> "$D"
+          echo "CONFIG_NO_HZ=y" >> "$D"
+          echo "CONFIG_HIGH_RES_TIMERS=y" >> "$D"
 
       - name: Setup Cache
         uses: actions/cache@v4
@@ -98,6 +102,9 @@ jobs:
           if [ -f "$FILE_PS" ]; then
             sed -i '/#include <linux\/power_supply.h>/a #ifndef POWER_SUPPLY_PROP_ROMID\n#define POWER_SUPPLY_PROP_ROMID 100\n#define POWER_SUPPLY_PROP_DS_STATUS 101\n#define POWER_SUPPLY_PROP_PAGE0_DATA 102\n#define POWER_SUPPLY_PROP_PAGE1_DATA 103\n#define POWER_SUPPLY_PROP_PAGEDATA 104\n#define POWER_SUPPLY_PROP_VERIFY_MODEL_NAME 105\n#endif' "$FILE_PS"
           fi
+          
+          # Фікс: Stub для EFI
+          echo "void __efistub_strrchr(void) {}" >> arch/arm64/kernel/setup.c
 
       - name: Build
         run: |
