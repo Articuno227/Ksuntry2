@@ -29,7 +29,12 @@ jobs:
         run: |
           cd kernel_source
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-          
+
+      - name: Verify SusFS
+        run: |
+          cd kernel_source
+          ls -l fs/susfs.c || echo "⚠️ Файл susfs.c не знайдено! Перевір скрипт інтеграції."
+    
       - name: Enable KPM & Fix Config
         run: |
           cd kernel_source
@@ -68,7 +73,6 @@ jobs:
           if [ -f arch/arm64/kernel/sys.c ]; then sed -i 's/.*ValidContext.*//g' arch/arm64/kernel/sys.c; fi
           if [ -f include/trace/events/sched.h ]; then sed -i '/Unsupported NR_CPUS/d' include/trace/events/sched.h; fi
           if [ -f drivers/md/dm-user.c ]; then sed -i 's/BIO_MAX_PAGES/256/g' drivers/md/dm-user.c; fi
-          if [ -f fs/Makefile ]; then grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile; fi
 
           # Фікс: NOHZ_BALANCE_KICK
           if [ -f kernel/sched/core.c ]; then
