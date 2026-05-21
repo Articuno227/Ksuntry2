@@ -92,10 +92,6 @@ jobs:
             sed -i '/module_param(rcu_cpu_stall_timeout/d' "$FILE_RCU"
             sed -i '/module_param(rcu_task_stall_timeout/d' "$FILE_RCU"
           fi
-          # Фікс: FULL_THROTTLE_BOOST
-          if [ -f kernel/sched/fair.c ]; then
-            sed -i '1i #ifndef FULL_THROTTLE_BOOST\n#define FULL_THROTTLE_BOOST 0\n#endif' kernel/sched/fair.c
-          fi
 
       - name: Build
         run: |
