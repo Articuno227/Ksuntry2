@@ -142,8 +142,8 @@ jobs:
 
       - name: Build
         run: |
-          git checkout kernel/sched/sched.h
           cd kernel_source
+          git checkout kernel/sched/sched.h
           make O=out ARCH=arm64 cust_defconfig
 
           ccache -z
