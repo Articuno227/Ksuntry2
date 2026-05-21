@@ -58,6 +58,15 @@ jobs:
           echo "CONFIG_TASKS_TRACE_RCU=y" >> "$D"
           echo "CONFIG_TASKS_RUDE_RCU=y" >> "$D"
 
+          # Вмикаємо додаткові функції планувальника для виправлення undefined symbols
+          echo "CONFIG_SCHED_WALT=y" >> "$D"
+          echo "CONFIG_SCHED_CORE_CTL=y" >> "$D"
+          echo "CONFIG_SCHED_AUTOGROUP=y" >> "$D"
+          
+          # Спробуємо вимкнути EFI_STUB, якщо воно не критично (це часто прибирає помилку __efistub_strrchr)
+          sed -i '/CONFIG_EFI_STUB=y/d' "$D"
+          echo "CONFIG_EFI_STUB=n" >> "$D"
+
       - name: Setup Cache
         uses: actions/cache@v4
         with:
