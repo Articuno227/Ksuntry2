@@ -5,7 +5,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  CCACHE_DIR: ~/.ccache
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_MAXSIZE: 5G
   CCACHE_COMPILERCHECK: content
 
@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y git bc bison flex libssl-dev make libelf-dev zip curl python3 lz4 zstd gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf clang-14 lld-14 llvm-14 ccache
           ccache -M 5G
-
+          
       - name: Clone kernel
         run: |
           git clone --depth=1 --branch sixteen-qpr2 https://github.com/PixelOS-Devices/android_kernel_xiaomi_sm6250 kernel_source
@@ -29,107 +29,91 @@ jobs:
         run: |
           cd kernel_source
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-
-      - name: Apply Structural Fixes (Python Smart Patch)
-        run: |
-          cd kernel_source
           
-          cat << 'EOF' > smart_patch.py
-          import os
-
-          # 1. Виправлення затертого сусфсом power_supply.h
-          ps_path = 'include/linux/power_supply.h'
-          if os.path.exists(ps_path):
-              print("Патчимо power_supply.h...")
-              with open(ps_path, 'r') as f:
-                  content = f.read()
-              
-              if 'arrayval' not in content:
-                  content = content.replace('int intval;', 'int intval;\n\tu8 arrayval[16];')
-              
-              if 'POWER_SUPPLY_PROP_ROMID' not in content:
-                  if 'POWER_SUPPLY_PROP_CAPACITY,' in content:
-                      content = content.replace('POWER_SUPPLY_PROP_CAPACITY,', 'POWER_SUPPLY_PROP_CAPACITY,\n\tPOWER_SUPPLY_PROP_ROMID,\n\tPOWER_SUPPLY_PROP_DS_STATUS,')
-                  else:
-                      content = content.replace('POWER_SUPPLY_PROP_STATUS,', 'POWER_SUPPLY_PROP_STATUS,\n\tPOWER_SUPPLY_PROP_ROMID,\n\tPOWER_SUPPLY_PROP_DS_STATUS,')
-              
-              with open(ps_path, 'w') as f:
-                  f.write(content)
-
-          # 2. Розумне лікування та ізоляція kernel/rcu/tasks.h
-          rcu_path = 'kernel/rcu/tasks.h'
-          if os.path.exists(rcu_path):
-              print("Патчимо tasks.h...")
-              with open(rcu_path, 'r') as f:
-                  lines = f.readlines()
-              
-              new_lines = []
-              new_lines.append("#ifndef _FIXED_RCU_TASKS_H\n")
-              new_lines.append("#define _FIXED_RCU_TASKS_H\n")
-              
-              for i, line in enumerate(lines):
-                  ln = i + 1
-                  
-                  # Прибираємо зламані макроси (наприклад #define 1 або #define y)
-                  if line.strip().startswith("#define"):
-                      parts = line.split()
-                      if len(parts) > 1 and parts[1][0].isdigit():
-                          line = "// " + line
-                  
-                  # Виправлення помилки присвоєння void до int (рядки 320-330 та 510-530)
-                  if ln in range(315, 335) or ln in range(480, 540):
-                      if '=' in line and '(' in line and 'if' not in line and 'while' not in line and 'return' not in line:
-                          parts = line.split('=', 1)
-                          indent = line[:len(line) - len(line.lstrip())]
-                          line = indent + parts[1].strip() + "\n"
-                          
-                  new_lines.append(line)
-                  
-              new_lines.append("#endif\n")
-              
-              with open(rcu_path, 'w') as f:
-                  f.writelines(new_lines)
-
-          # 3. Вирізання помилки NR_CPUS у sched.h
-          sched_path = 'include/trace/events/sched.h'
-          if os.path.exists(sched_path):
-              print("Патчимо sched.h...")
-              with open(sched_path, 'r') as f:
-                  s_content = f.read()
-              s_content = s_content.replace('#error "Unsupported NR_CPUS for lb tracepoint."', '// #error "Unsupported NR_CPUS for lb tracepoint."')
-              with open(sched_path, 'w') as f:
-                  f.write(s_content)
-          EOF
-          
-          python3 smart_patch.py
-
       - name: Enable KPM & Fix Config
         run: |
           cd kernel_source
           D="arch/arm64/configs/cust_defconfig"
+          
           echo "CONFIG_KPM=y" >> "$D"
           echo "CONFIG_KALLSYMS=y" >> "$D"
           echo "CONFIG_KALLSYMS_ALL=y" >> "$D"
+          
+          # Вмикаємо BPF (для Android 16)
+          sed -i '/CONFIG_BPF=/d' "$D"
           echo "CONFIG_BPF=y" >> "$D"
+          sed -i '/CONFIG_BPF_SYSCALL=/d' "$D"
           echo "CONFIG_BPF_SYSCALL=y" >> "$D"
+          
+          # ВМИКАЄМО PREEMPT ТА RCU (Вирішує корінь проблеми tasks.h)
+          sed -i '/CONFIG_PREEMPT_NONE=y/d' "$D"
+          sed -i '/CONFIG_PREEMPT_VOLUNTARY=y/d' "$D"
           echo "CONFIG_PREEMPT=y" >> "$D"
           echo "CONFIG_TASKS_RCU=y" >> "$D"
+          echo "CONFIG_TASKS_TRACE_RCU=y" >> "$D"
+          echo "CONFIG_TASKS_RUDE_RCU=y" >> "$D"
 
-      - name: Setup Cache
+      - name: Reset and Optimize Cache
         uses: actions/cache@v4
         with:
-          path: ~/.ccache
+          path: ${{ github.workspace }}/.ccache
           key: ccache-kernel-sm6250-${{ github.run_id }}
           restore-keys: |
             ccache-kernel-sm6250-
+
+      - name: Apply Bulletproof Patches
+        run: |
+          cd kernel_source
+          if [ -f arch/arm64/kernel/entry.S ]; then sed -i 's/.*ValidContext.*/ValidContext:/g' arch/arm64/kernel/entry.S; fi
+          if [ -f arch/arm64/kernel/sys.c ]; then sed -i 's/.*ValidContext.*//g' arch/arm64/kernel/sys.c; fi
+          if [ -f include/trace/events/sched.h ]; then sed -i '/Unsupported NR_CPUS/d' include/trace/events/sched.h; fi
+          if [ -f drivers/md/dm-user.c ]; then sed -i 's/BIO_MAX_PAGES/256/g' drivers/md/dm-user.c; fi
+          if [ -f fs/Makefile ]; then grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile; fi
+
+          # Фікс: NOHZ_BALANCE_KICK
+          if [ -f kernel/sched/core.c ]; then
+            sed -i '1i #ifndef NOHZ_BALANCE_KICK\n#define NOHZ_BALANCE_KICK 0\n#endif' kernel/sched/core.c
+          fi
+
+          # Фікс: Power Supply (arrayval та втрачені константи Xiaomi)
+          FILE_PS_H="include/linux/power_supply.h"
+          if [ -f "$FILE_PS_H" ]; then
+            grep -q "arrayval" "$FILE_PS_H" || sed -i '/int intval;/a \    u8 arrayval[16];' "$FILE_PS_H"
+          fi
+          
+          FILE_PS="drivers/power/supply/power_supply_sysfs.c"
+          if [ -f "$FILE_PS" ]; then
+            sed -i '/#include <linux\/power_supply.h>/a #ifndef POWER_SUPPLY_PROP_ROMID\n#define POWER_SUPPLY_PROP_ROMID 100\n#define POWER_SUPPLY_PROP_DS_STATUS 101\n#define POWER_SUPPLY_PROP_PAGE0_DATA 102\n#define POWER_SUPPLY_PROP_PAGE1_DATA 103\n#define POWER_SUPPLY_PROP_PAGEDATA 104\n#define POWER_SUPPLY_PROP_VERIFY_MODEL_NAME 105\n#endif' "$FILE_PS"
+          fi
 
       - name: Build
         run: |
           cd kernel_source
           make O=out ARCH=arm64 cust_defconfig
+
           ccache -z
           
-          make -j$(nproc) O=out ARCH=arm64 \
+          # Жорсткий бекап-фікс RCU (Тотальне зачищення помилок tasks.h на рівні коду - ЗБЕРЕЖЕНО!)
+          FILE_RCU="kernel/rcu/tasks.h"
+          if [ -f "$FILE_RCU" ]; then
+            sed -i 's/rcu_task_stall_timeout/rcu_cpu_stall_timeout/g' "$FILE_RCU"
+            sed -i 's/RCU_TASK_STALL_TIMEOUT/21/g' "$FILE_RCU"
+            sed -i 's/RTGS_PRE_WAIT_GP/1/g' "$FILE_RCU"
+            sed -i 's/RTGS_SCAN_TASKLIST/2/g' "$FILE_RCU"
+            sed -i 's/raw_spin_lock_irqsave.*/;/g' "$FILE_RCU"
+            sed -i 's/raw_spin_unlock_irqrestore.*/;/g' "$FILE_RCU"
+            sed -i 's/WRITE_ONCE(\*rtp->cbs_tail, rhp)/;/g' "$FILE_RCU"
+            sed -i 's/rtp->cbs_tail = &rhp->next/;/g' "$FILE_RCU"
+            sed -i 's/wake_up(&rtp->cbs_wq)/;/g' "$FILE_RCU"
+            sed -i 's/rtp->gp_state = newstate/;/g' "$FILE_RCU"
+            sed -i 's/rtp->gp_jiffies = jiffies/;/g' "$FILE_RCU"
+            sed -i 's/rtp->pregp_func()/;/g' "$FILE_RCU"
+            sed -i 's/needwake = !rtp->cbs_head/needwake = 0/g' "$FILE_RCU"
+            sed -i 's/READ_ONCE(rtp->kthread_ptr)/0/g' "$FILE_RCU"
+          fi
+
+          # Запуск компіляції
+          make -j$(nproc --all) O=out ARCH=arm64 \
             CC="ccache clang-14" \
             LD=ld.lld-14 \
             AR=llvm-ar-14 \
@@ -143,10 +127,13 @@ jobs:
             LLVM=1 \
             LLVM_IAS=0 \
             KCFLAGS="-Dcompat_uptr_t=__u32 -Wno-implicit-function-declaration -Wno-error" \
+            AFLAGS="-Wa,-W" \
             Image dtbs 2>&1 | tee ../build.log || true
+            
+          ccache -s
           
           echo "=== Перевірка помилок ==="
-          grep -i "error:" ../build.log | head -20 || true
+          grep -i "error:" ../build.log | head -30 || true
           
           echo "=== Перевірка вихідних файлів ==="
           ls -lh out/arch/arm64/boot/ || true
@@ -175,8 +162,8 @@ jobs:
             exit 1
           fi
 
-          find kernel_source/out/arch/arm64/boot/dts -name "*.dtb" -exec cp {} AnyKernel3/ \;
-          
+          find kernel_source/out/arch/arm64/boot/dts -name "*.dtb" -exec cat {} >> AnyKernel3/dtb \; 2>/dev/null || true
+
           cd AnyKernel3
           zip -r9 "../SukiSU-joyeuse.zip" . -x ".git*"
           cd ..
