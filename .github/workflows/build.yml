@@ -63,9 +63,13 @@ jobs:
           echo "CONFIG_SCHED_CORE_CTL=y" >> "$D"
           echo "CONFIG_SCHED_AUTOGROUP=y" >> "$D"
           
-          # Спробуємо вимкнути EFI_STUB, якщо воно не критично (це часто прибирає помилку __efistub_strrchr)
-          sed -i '/CONFIG_EFI_STUB=y/d' "$D"
+          # Правильне вимкнення EFI та налаштування NO_HZ
+          sed -i '/CONFIG_EFI=/d' "$D"
+          echo "CONFIG_EFI=n" >> "$D"
+          sed -i '/CONFIG_EFI_STUB=/d' "$D"
           echo "CONFIG_EFI_STUB=n" >> "$D"
+          
+          # Налаштування планувальника для nohz_flags
           echo "CONFIG_NO_HZ_COMMON=y" >> "$D"
           echo "CONFIG_NO_HZ_IDLE=y" >> "$D"
           echo "CONFIG_NO_HZ=y" >> "$D"
@@ -105,6 +109,14 @@ jobs:
           
           # Фікс: Stub для EFI
           echo "void __efistub_strrchr(void) {}" >> arch/arm64/kernel/setup.c
+
+      - name: Clean Hacked Files
+        run: |
+          cd kernel_source
+          # Повертаємо sched.h до оригіналу
+          git checkout kernel/sched/sched.h
+          # Видаляємо наш "хак" з setup.c, якщо він там є
+          sed -i '/void __efistub_strrchr/d' arch/arm64/kernel/setup.c || true
 
       - name: Build
         run: |
