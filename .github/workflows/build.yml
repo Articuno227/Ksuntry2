@@ -25,6 +25,15 @@ jobs:
         run: |
           git clone --depth=1 --branch sixteen-qpr2 https://github.com/PixelOS-Devices/android_kernel_xiaomi_sm6250 kernel_source
 
+      - name: Manual SusFS Fix
+        run: |
+          cd kernel_source
+          # Перевіримо, де лежать файли, якщо скрипт їх таки завантажив, але не перемістив
+          find . -name "susfs.c"
+          # Якщо знайдеш, де вони лежать (наприклад, у папці susfs-main), скопіюй їх:
+          # cp susfs-main/fs/susfs.c fs/
+          # cp susfs-main/fs/susfs.h fs/
+          
       - name: Integrate SukiSU
         run: |
           cd kernel_source
@@ -109,6 +118,13 @@ jobs:
           
           # Фікс: Stub для EFI
           echo "void __efistub_strrchr(void) {}" >> arch/arm64/kernel/setup.c
+
+          # Додаємо nohz_flags у структуру rq
+          # Шукаємо кінець структури rq (де зазвичай лежать змінні) і додаємо поле
+          sed -i '/struct rq {/a \
+          #ifdef CONFIG_NO_HZ_COMMON\
+          \tunsigned long nohz_flags;\
+          #endif' kernel/sched/sched.h
 
       - name: Clean Hacked Files
         run: |
