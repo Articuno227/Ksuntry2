@@ -118,6 +118,12 @@ jobs:
           # Видаляємо наш "хак" з setup.c, якщо він там є
           sed -i '/void __efistub_strrchr/d' arch/arm64/kernel/setup.c || true
 
+      - name: Debug sched.h
+        run: |
+          cd kernel_source
+          echo "=== Вміст sched.h навколо лінії 2417 ==="
+          sed -n '2410,2425p' kernel/sched/sched.h
+
       - name: Build
         run: |
           cd kernel_source
