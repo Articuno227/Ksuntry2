@@ -5,7 +5,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  CCACHE_DIR: /github/home/.ccache
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_MAXSIZE: 5G
   CCACHE_COMPILERCHECK: content
 
@@ -25,10 +25,51 @@ jobs:
         run: |
           git clone --depth=1 --branch sixteen-qpr2 https://github.com/PixelOS-Devices/android_kernel_xiaomi_sm6250 kernel_source
 
-      - name: Patch power_supply.h
+      - name: Apply Structural Fixes
         run: |
           cd kernel_source
-          sed -i '/int intval;/a \    u8 arrayval[16];' include/linux/power_supply.h
+          
+          # 1. Ідемпотентний фікс Power Supply
+          if ! grep -q "arrayval" include/linux/power_supply.h; then
+            sed -i '/int intval;/a \    u8 arrayval[16];' include/linux/power_supply.h
+          fi
+          
+          # 2. Елегантний фікс RCU (генеруємо відсутні структури замість видалення коду)
+          cat << 'EOF' > kernel/rcu/rcu_tasks_fix.h
+          #ifndef RCU_TASKS_FIX_H
+          #define RCU_TASKS_FIX_H
+          #include <linux/spinlock.h>
+          #include <linux/wait.h>
+          #include <linux/rcupdate.h>
+          
+          #define RTGS_PRE_WAIT_GP 1
+          #define RTGS_SCAN_TASKLIST 2
+          
+          #ifndef rcu_task_stall_timeout
+          #define rcu_task_stall_timeout rcu_cpu_stall_timeout
+          #endif
+          
+          #ifndef RCU_TASK_STALL_TIMEOUT
+          #define RCU_TASK_STALL_TIMEOUT rcu_cpu_stall_timeout
+          #endif
+          
+          struct rcu_tasks {
+              raw_spinlock_t cbs_lock;
+              struct rcu_head *cbs_head;
+              struct rcu_head **cbs_tail;
+              wait_queue_head_t cbs_wq;
+              int gp_state;
+              unsigned long gp_jiffies;
+              void (*pregp_func)(void);
+              struct task_struct *kthread_ptr;
+          };
+          #endif
+          EOF
+          
+          if [ -f kernel/rcu/tasks.h ]; then
+            # Вставляємо наш рятівний заголовок на самий початок файлу
+            sed -i '1i #include "rcu_tasks_fix.h"' kernel/rcu/tasks.h
+          fi
 
       - name: Integrate SukiSU
         run: |
@@ -38,11 +79,6 @@ jobs:
       - name: Enable KPM & Fix Config
         run: |
           cd kernel_source
-          # Видалення конфліктних макросів перед збіркою
-          if [ -f kernel/rcu/tasks.h ]; then
-            sed -i '/rcu_cpu_stall_timeout/d' kernel/rcu/tasks.h
-          fi
-          
           D="arch/arm64/configs/cust_defconfig"
           echo "CONFIG_KPM=y" >> "$D"
           echo "CONFIG_KALLSYMS=y" >> "$D"
@@ -55,7 +91,7 @@ jobs:
       - name: Setup Cache
         uses: actions/cache@v4
         with:
-          path: /github/home/.ccache
+          path: ${{ github.workspace }}/.ccache
           key: ccache-kernel-sm6250-${{ github.run_id }}
           restore-keys: |
             ccache-kernel-sm6250-
@@ -93,7 +129,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log-${{ github.run_number }}
-          path: build.log
+          path: kernel_source/build.log
           retention-days: 3
 
       - name: Package
@@ -101,5 +137,26 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
           sed -i 's/do.devicecheck=1/do.devicecheck=0/' AnyKernel3/anykernel.sh
 
-          if [ -
+          if [ -f kernel_source/out/arch/arm64/boot/Image ]; then
+            gzip -c9 kernel_source/out/arch/arm64/boot/Image > AnyKernel3/Image.gz
+          elif [ -f kernel_source/out/arch/arm64/boot/Image.gz ]; then
+            cp kernel_source/out/arch/arm64/boot/Image.gz AnyKernel3/
+          elif [ -f kernel_source/out/arch/arm64/boot/Image-dtb ]; then
+            gzip -c9 kernel_source/out/arch/arm64/boot/Image-dtb > AnyKernel3/Image.gz
+          else
+            echo "❌ КРИТИЧНА ПОМИЛКА: жодного файлу ядра не знайдено!"
+            exit 1
+          fi
+
+          find kernel_source/out/arch/arm64/boot/dts -name "*.dtb" -exec cp {} AnyKernel3/ \;
           
+          cd AnyKernel3
+          zip -r9 "../SukiSU-joyeuse.zip" . -x ".git*"
+          cd ..
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: SukiSU-joyeuse-${{ github.run_number }}
+          path: ./*.zip
+          retention-days: 5
